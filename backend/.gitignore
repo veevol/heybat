@@ -1,0 +1,8 @@
+# Environment (never commit secrets — service_role key stays local only)
+.env
+.env.*
+!.env.example
+
+node_modules/
+*.log
+.DS_Store

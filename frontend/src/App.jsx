@@ -1,0 +1,34 @@
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import DataSupplierPage from './pages/DataSupplierPage';
+import PlaceholderPage from './pages/PlaceholderPage';
+import PricelistPbfPage from './pages/PricelistPbfPage';
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/data-supplier" replace />} />
+        <Route path="/data-supplier" element={<DataSupplierPage />} />
+        <Route path="/pricelist-pbf" element={<PricelistPbfPage />} />
+        <Route
+          path="/akun"
+          element={
+            <PlaceholderPage
+              title="Akun"
+              body="Halaman akun masih placeholder. Detail profil menyusul."
+            />
+          }
+        />
+        <Route
+          path="/pengaturan"
+          element={
+            <PlaceholderPage
+              title="Pengaturan"
+              body="Halaman pengaturan masih placeholder. Opsi aplikasi menyusul."
+            />
+          }
+        />
+      </Routes>
+    </BrowserRouter>
+  );
+}

@@ -1,0 +1,11 @@
+{
+  "name": "heybat",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Heybat — Data Supplier foundation",
+  "scripts": {
+    "dev:api": "npm run dev --prefix backend",
+    "dev:web": "npm run dev --prefix frontend",
+    "build:web": "npm run build --prefix frontend"
+  }
+}

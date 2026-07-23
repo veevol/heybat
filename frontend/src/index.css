@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-base: #29282d;
+  --color-bg-surface: #33323a;
+  --color-bg-surface-hover: #3d3c45;
+  --color-accent-yellow: #ffd500;
+  --color-accent-cyan: #5ec8f5;
+  --color-accent-navy: #12266e;
+  --color-whatsapp: #25d366;
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #a8a8b3;
+  --color-text-muted: #6e6e7a;
+  --color-border-subtle: #454550;
+  --color-state-success: #2ecc71;
+  --color-state-warning: #f5a623;
+  --color-state-error: #e5484d;
+  --radius-heybat: 4px;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.25;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes heybat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.heybat-spin {
+  animation: heybat-spin 0.9s linear infinite;
+}
+
+/* Hide scrollbars app-wide; scrolling still works */
+.scrollbar-hide,
+html,
+body {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

@@ -1,0 +1,78 @@
+import {
+  FileSpreadsheet,
+  LayoutGrid,
+  Plus,
+  UserRound,
+} from 'lucide-react';
+
+/**
+ * Primary bottom-nav items (expandable pill).
+ * Add new modules here as the app grows.
+ *
+ * If more than 5 items, the pill keeps a fixed width and
+ * scrolls the icons horizontally (see BottomNav).
+ */
+export const PRIMARY_NAV_ITEMS = [
+  {
+    id: 'supplier',
+    label: 'Supplier',
+    to: '/data-supplier',
+    match: (pathname) => pathname.startsWith('/data-supplier'),
+    icon: LayoutGrid,
+    type: 'link',
+  },
+  {
+    id: 'pricelist',
+    label: 'Pricelist',
+    to: '/pricelist-pbf',
+    match: (pathname) => pathname.startsWith('/pricelist-pbf'),
+    icon: FileSpreadsheet,
+    type: 'link',
+  },
+  {
+    id: 'akun',
+    label: 'Akun',
+    match: (pathname) =>
+      pathname.startsWith('/akun') || pathname.startsWith('/pengaturan'),
+    icon: UserRound,
+    type: 'akun-sheet',
+  },
+];
+
+/**
+ * Optional page-level action slot (replaces the old floating FAB).
+ * Declared here so BottomNav knows WHEN to show "+", while the page
+ * supplies the onClick handler via AppShell `pageAction`.
+ *
+ * Only one slot can match a given path.
+ */
+export const PAGE_ACTION_SLOTS = [
+  {
+    id: 'tambah-supplier',
+    match: (pathname) => pathname.startsWith('/data-supplier'),
+    label: 'Tambah',
+    icon: Plus,
+    ariaLabel: 'Tambah Supplier',
+  },
+];
+
+/** Max nav icons visible at once inside the expanded pill (content scrolls beyond this). */
+export const NAV_PILL_VISIBLE_SLOTS = 5;
+
+/**
+ * @param {string} pathname
+ * @param {{ onClick?: () => void } | null | undefined} pageAction
+ * @returns {null | { id: string, label: string, icon: import('lucide-react').LucideIcon, ariaLabel: string, onClick: () => void }}
+ */
+export function resolvePageAction(pathname, pageAction) {
+  if (!pageAction?.onClick) return null;
+  const slot = PAGE_ACTION_SLOTS.find((s) => s.match(pathname));
+  if (!slot) return null;
+  return {
+    id: slot.id,
+    label: slot.label,
+    icon: slot.icon,
+    ariaLabel: slot.ariaLabel || slot.label,
+    onClick: pageAction.onClick,
+  };
+}
