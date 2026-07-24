@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
+import { obatDropdownParts } from '../lib/matchingUi';
 
 /**
  * Searchable obat_yelo picker.
+ * Display: [Nama Obat bold] [konversi] [Satuan 1]/[Satuan 2] — tanpa kode obat.
+ *
  * @param {{
- *   options: Array<{ kode_obat: string, nama_obat: string }>,
+ *   options: Array<object>,
  *   value: string,
  *   onChange: (kode: string) => void,
  *   placeholder?: string,
@@ -30,15 +33,18 @@ export default function SearchableObatSelect({
     const q = query.trim().toLowerCase();
     if (!q) return options.slice(0, 80);
     return options
-      .filter(
-        (o) =>
-          String(o.nama_obat || '')
-            .toLowerCase()
-            .includes(q) ||
-          String(o.kode_obat || '')
-            .toLowerCase()
-            .includes(q)
-      )
+      .filter((o) => {
+        const nama = String(o.nama_obat || '').toLowerCase();
+        const kode = String(o.kode_obat || '').toLowerCase();
+        const sat1 = String(o.satuan_1?.nama || '').toLowerCase();
+        const sat2 = String(o.satuan_2?.nama || '').toLowerCase();
+        return (
+          nama.includes(q) ||
+          kode.includes(q) ||
+          sat1.includes(q) ||
+          sat2.includes(q)
+        );
+      })
       .slice(0, 80);
   }, [options, query]);
 
@@ -57,6 +63,20 @@ export default function SearchableObatSelect({
     }
   }, [open]);
 
+  function renderLabel(obat, { truncate = true } = {}) {
+    const { nama, meta } = obatDropdownParts(obat);
+    return (
+      <span
+        className={`min-w-0 flex-1 text-[13px] leading-snug text-text-primary ${
+          truncate ? 'truncate' : ''
+        }`}
+      >
+        <span className="font-bold">{nama}</span>
+        {meta ? <span className="font-normal"> {meta}</span> : null}
+      </span>
+    );
+  }
+
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -64,20 +84,13 @@ export default function SearchableObatSelect({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-left outline-none focus:border-accent-yellow"
       >
-        <span className="min-w-0 flex-1">
-          {selected ? (
-            <>
-              <span className="block truncate text-[13px] font-semibold leading-tight text-text-primary">
-                {selected.nama_obat}
-              </span>
-              <span className="block truncate text-[11px] text-text-muted">
-                {selected.kode_obat}
-              </span>
-            </>
-          ) : (
-            <span className="text-[13px] text-text-muted">{placeholder}</span>
-          )}
-        </span>
+        {selected ? (
+          renderLabel(selected)
+        ) : (
+          <span className="min-w-0 flex-1 text-[13px] text-text-muted">
+            {placeholder}
+          </span>
+        )}
         <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />
       </button>
 
@@ -109,16 +122,11 @@ export default function SearchableObatSelect({
                         onChange(o.kode_obat);
                         setOpen(false);
                       }}
-                      className={`flex w-full flex-col px-3 py-1.5 text-left hover:bg-bg-surface-hover ${
+                      className={`flex w-full items-center px-3 py-1.5 text-left hover:bg-bg-surface-hover ${
                         active ? 'bg-bg-surface-hover' : ''
                       }`}
                     >
-                      <span className="truncate text-[13px] font-medium text-text-primary">
-                        {o.nama_obat}
-                      </span>
-                      <span className="truncate text-[11px] text-text-muted">
-                        {o.kode_obat}
-                      </span>
+                      {renderLabel(o)}
                     </button>
                   </li>
                 );

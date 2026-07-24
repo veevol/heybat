@@ -23,7 +23,14 @@ const SELECT_MATCHING = `
   tanggal_diverifikasi,
   created_at,
   updated_at,
-  obat:obat_yelo ( kode_obat, nama_obat ),
+  obat:obat_yelo (
+    kode_obat,
+    nama_obat,
+    konversi,
+    satuan_1:ref_satuan!obat_yelo_satuan_1_id_fkey ( id, nama ),
+    satuan_2:ref_satuan!obat_yelo_satuan_2_id_fkey ( id, nama ),
+    grup_substitusi:ref_grup_substitusi ( id, nama )
+  ),
   supplier:supplier ( id, nama, inisial )
 `;
 
@@ -75,7 +82,7 @@ async function fetchLatestPricelistByPbf(pbfId) {
   const data = await fetchAllRows(() =>
     supabase
       .from('pricelist')
-      .select('kode_pbf, nama_barang, satuan, qty, harga_dasar, tanggal_upload, id')
+      .select('kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, tanggal_upload, id')
       .eq('pbf_id', pbfId)
       .order('tanggal_upload', { ascending: false })
       .order('id', { ascending: false })
@@ -90,7 +97,12 @@ async function fetchLatestPricelistByPbf(pbfId) {
 
 async function fetchAllObatYeloLight() {
   return fetchAllRows(() =>
-    supabase.from('obat_yelo').select('kode_obat, nama_obat').order('nama_obat')
+    supabase
+      .from('obat_yelo')
+      .select(
+        'kode_obat, nama_obat, konversi, satuan_1:ref_satuan!obat_yelo_satuan_1_id_fkey ( id, nama ), satuan_2:ref_satuan!obat_yelo_satuan_2_id_fkey ( id, nama ), grup_substitusi:ref_grup_substitusi ( id, nama )'
+      )
+      .order('nama_obat')
   );
 }
 
@@ -107,6 +119,8 @@ function scoreCandidates(namaBarang, obatList, topN = KANDIDAT_TOP) {
       kode_obat_yelo: obat.kode_obat,
       nama_obat: obat.nama_obat,
       skor_kemiripan: Math.round(score * 1000) / 1000,
+      konversi: obat.konversi ?? null,
+      satuan_1: obat.satuan_1 || null,
     };
   });
 
@@ -381,6 +395,7 @@ router.get('/kandidat/:pbfId', async (req, res) => {
         satuan: row.satuan,
         qty: row.qty,
         harga_dasar: row.harga_dasar,
+        catatan_kondisi: row.catatan_kondisi || null,
         kandidat,
         dari_cache: fromCache,
       });
@@ -426,7 +441,7 @@ router.get('/menunggu-verifikasi', async (_req, res) => {
       rows.map(async (row) => {
         const { data: pl } = await supabase
           .from('pricelist')
-          .select('nama_barang, harga_dasar, satuan')
+          .select('nama_barang, harga_dasar, satuan, catatan_kondisi')
           .eq('pbf_id', row.pricelist_pbf_id)
           .eq('kode_pbf', row.pricelist_kode_pbf)
           .order('tanggal_upload', { ascending: false })
@@ -437,6 +452,7 @@ router.get('/menunggu-verifikasi', async (_req, res) => {
           pricelist_nama_barang: pl?.nama_barang || null,
           pricelist_harga_dasar: pl?.harga_dasar ?? null,
           pricelist_satuan: pl?.satuan || null,
+          pricelist_catatan_kondisi: pl?.catatan_kondisi || null,
         };
       })
     );
