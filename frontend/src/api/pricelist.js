@@ -1,3 +1,5 @@
+import { apiUrl } from './baseUrl';
+
 async function parseResponse(res) {
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
@@ -19,13 +21,13 @@ function appendMapping(form, mapping) {
 }
 
 export async function getPricelistTemplate(pbfId) {
-  const res = await fetch(`/api/pricelist-template/${pbfId}`);
+  const res = await fetch(apiUrl(`/api/pricelist-template/${pbfId}`));
   if (res.status === 404) return null;
   return parseResponse(res);
 }
 
 export async function createPricelistTemplate(payload) {
-  const res = await fetch('/api/pricelist-template', {
+  const res = await fetch(apiUrl('/api/pricelist-template'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -34,7 +36,7 @@ export async function createPricelistTemplate(payload) {
 }
 
 export async function updatePricelistTemplate(pbfId, payload) {
-  const res = await fetch(`/api/pricelist-template/${pbfId}`, {
+  const res = await fetch(apiUrl(`/api/pricelist-template/${pbfId}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -46,7 +48,10 @@ export async function previewPricelistExcel(file, barisMulaiData = 2) {
   const form = new FormData();
   form.append('file', file);
   form.append('baris_mulai_data', String(barisMulaiData));
-  const res = await fetch('/api/pricelist/preview', { method: 'POST', body: form });
+  const res = await fetch(apiUrl('/api/pricelist/preview'), {
+    method: 'POST',
+    body: form,
+  });
   return parseResponse(res);
 }
 
@@ -62,13 +67,16 @@ export async function parsePricelistPreview({
   form.append('file', file);
   if (diuploadOleh) form.append('diupload_oleh', diuploadOleh);
   appendMapping(form, mapping);
-  const res = await fetch('/api/pricelist/parse-preview', { method: 'POST', body: form });
+  const res = await fetch(apiUrl('/api/pricelist/parse-preview'), {
+    method: 'POST',
+    body: form,
+  });
   return parseResponse(res);
 }
 
 /** Tahap 2: konfirmasi simpan dari session preview */
 export async function confirmPricelistUpload(sessionId) {
-  const res = await fetch('/api/pricelist/confirm', {
+  const res = await fetch(apiUrl('/api/pricelist/confirm'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId }),
@@ -77,6 +85,8 @@ export async function confirmPricelistUpload(sessionId) {
 }
 
 export async function listLatestPricelist(pbfId) {
-  const res = await fetch(`/api/pricelist?pbf_id=${encodeURIComponent(pbfId)}`);
+  const res = await fetch(
+    apiUrl(`/api/pricelist?pbf_id=${encodeURIComponent(pbfId)}`)
+  );
   return parseResponse(res);
 }

@@ -9,7 +9,46 @@ const pricelistRouter = require('./routes/pricelist');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+/** Comma-separated list, e.g. https://heybat.vercel.app,http://localhost:5173 */
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://heybat.vercel.app',
+  'http://localhost:5173',
+];
+
+function parseAllowedOrigins() {
+  const raw = process.env.ALLOWED_ORIGINS;
+  if (raw && String(raw).trim()) {
+    return String(raw)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return DEFAULT_ALLOWED_ORIGINS;
+}
+
+const allowedOrigins = parseAllowedOrigins();
+
+function isOriginAllowed(origin) {
+  if (!origin) return true; // curl / server-to-server / same-origin tools
+  if (allowedOrigins.includes(origin)) return true;
+  // Any local Vite port during development
+  if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return true;
+  // Heybat production + Vercel preview URLs (heybat-xxx.vercel.app)
+  if (/^https:\/\/heybat([a-z0-9-]*?)\.vercel\.app$/.test(origin)) return true;
+  return false;
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+      console.warn(`[cors] blocked origin: ${origin}`);
+      return callback(null, false);
+    },
+  })
+);
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/api/health', (_req, res) => {
@@ -30,4 +69,6 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log(`Heybat API listening on http://localhost:${PORT}`);
+  console.log(`[cors] allowed origins (env/default): ${allowedOrigins.join(', ')}`);
+  console.log('[cors] also allowing localhost:* and heybat*.vercel.app');
 });

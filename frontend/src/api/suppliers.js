@@ -1,4 +1,6 @@
-const API_BASE = '/api/suppliers';
+import { apiUrl } from './baseUrl';
+
+const API_BASE = apiUrl('/api/suppliers');
 
 async function parseResponse(res) {
   if (res.status === 204) return null;
