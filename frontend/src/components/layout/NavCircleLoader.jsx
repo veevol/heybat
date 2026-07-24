@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
  * - loading ends: wait for morph cycle boundary (animationiteration) then fade logo back
  *
  * onBusyChange(true) while logo is fading out, morph is visible, or waiting for cycle end —
- * parent switches circle to dark surface so accent-yellow morph stays visible.
+ * parent makes the circle background transparent (no frame) so accent-yellow morph floats clean.
  */
 export default function NavCircleLoader({ isLoading = false, onBusyChange }) {
   const [logoOpaque, setLogoOpaque] = useState(true);

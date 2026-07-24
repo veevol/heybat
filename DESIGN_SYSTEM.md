@@ -76,7 +76,7 @@ Line-height rapat (1.35 untuk body, 1.2 untuk heading) — bukan longgar. Tujuan
 - Collapsed control (kanan-bawah): kotak `rounded-[4px]` (bukan full circle) + logo Heybat saat idle.
 - Saat `navLoading`: logo fade-out (~180ms), lalu Morph Loader (bentuk SVG morph + wave) terus berputar.
 - Saat loading selesai: tunggu titik siklus morph (event `animationiteration`) baru logo fade-in — jangan potong animasi di tengah bentuk.
-- Warna morph: `accent-yellow` di atas circle `bg-surface` saat busy (circle idle tetap kuning + logo).
+- Warna morph: `accent-yellow` di atas background transparan (tanpa frame/ring) saat busy; idle tetap kuning + logo + ring tipis.
 
 **Button:**
 

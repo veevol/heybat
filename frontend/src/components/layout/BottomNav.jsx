@@ -92,13 +92,13 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
         <div className="relative mx-auto h-14 w-full max-w-lg">
           <div
             className={[
-              'pointer-events-auto absolute bottom-0 flex items-center overflow-hidden shadow-lg shadow-black/45 transition-all duration-300 ease-out',
+              'pointer-events-auto absolute bottom-0 flex items-center overflow-hidden transition-all duration-300 ease-out',
               expanded
-                ? `${PILL} left-1/2 -translate-x-1/2 gap-0.5 rounded-full border border-border-subtle/80 bg-bg-surface/95 py-1 pl-1.5 pr-1.5 backdrop-blur-md`
-                : `${CIRCLE} right-0 translate-x-0 justify-center rounded-[4px] ring-1 ${
+                ? `${PILL} left-1/2 -translate-x-1/2 gap-0.5 rounded-full border border-border-subtle/80 bg-bg-surface/95 py-1 pl-1.5 pr-1.5 shadow-lg shadow-black/45 backdrop-blur-md`
+                : `${CIRCLE} right-0 translate-x-0 justify-center rounded-[4px] ${
                     circleBusy
-                      ? 'bg-bg-surface ring-border-subtle'
-                      : 'bg-accent-yellow ring-black/10'
+                      ? 'bg-transparent shadow-none'
+                      : 'bg-accent-yellow shadow-lg shadow-black/45 ring-1 ring-black/10'
                   }`,
             ].join(' ')}
           >

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "import:obat-yelo": "node scripts/import-obat-yelo.js"
+    "import:obat-yelo": "node scripts/import-obat-yelo.js",
+    "import:matching-lama": "node scripts/import-matching-lama.js"
   },
   "keywords": [],
   "author": "",

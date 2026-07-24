@@ -17,3 +17,4 @@ backend/tmp-*.xlsx
 
 # CSV import payloads (local only)
 backend/data/*.csv
+backend/scripts/import-matching-lama-report-*.json
