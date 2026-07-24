@@ -1,21 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SlidersHorizontal } from 'lucide-react';
 import {
   createObatYelo,
   deleteObatYelo,
+  getNextKodeApp,
   listObatYelo,
   updateObatYelo,
+  updateStatusVmedis,
 } from '../api/obatYelo';
+import { getSupplierMapAktif, syncObatSuppliers } from '../api/matching';
+import { listLatestPricelist } from '../api/pricelist';
+import { listSuppliers } from '../api/suppliers';
 import { listRef } from '../api/refData';
 import AppShell from '../components/layout/AppShell';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
+import FilterSortSearchSheet from '../components/FilterSortSearchSheet';
 import ObatYeloCard from '../components/ObatYeloCard';
 import ObatYeloDetailSheet from '../components/ObatYeloDetailSheet';
 import ObatYeloFormModal from '../components/ObatYeloFormModal';
 import ObatYeloSkeleton from '../components/ObatYeloSkeleton';
+import PricelistPickSheet from '../components/PricelistPickSheet';
+import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingModal';
 import Toast from '../components/Toast';
+import { useAuth } from '../context/AuthContext';
+import {
+  compareKodeObat,
+  isBelumDiVmedis,
+  isSudahDiVmedis,
+  sortGolonganFilterOptions,
+} from '../lib/obatYelo';
+import {
+  getObatYeloCache,
+  setObatYeloCache,
+  updateObatYeloCacheItems,
+  updateObatYeloCacheSupplierMap,
+} from '../lib/obatYeloCache';
 
-const PAGE_SIZE = 50;
+const PAGE_CHUNK = 50;
 
 const EMPTY_FORM = {
   kode_obat: '',
@@ -34,6 +55,16 @@ const EMPTY_REFS = {
   golongan: [],
   satuan: [],
   'grup-substitusi': [],
+};
+
+const EMPTY_SORT = { key: null, direction: 'asc' };
+const EMPTY_FILTERS = {
+  supplier: [],
+  golongan: [],
+  substitusi: [],
+  satuan: [],
+  konversi: [],
+  status_vmedis: [],
 };
 
 function toPayload(form) {
@@ -69,13 +100,18 @@ function obatToForm(obat) {
   };
 }
 
+function supplierInisialLabel(s) {
+  return s?.inisial || s?.nama || '';
+}
+
 export default function DataObatYeloPage() {
+  const { profile, hasAccess } = useAuth();
+  const isOwner = profile?.is_owner === true;
+  const canTambah = hasAccess('data-obat-yelo', 'tambah');
+  const canEdit = hasAccess('data-obat-yelo', 'edit');
+  const canHapus = hasAccess('data-obat-yelo', 'hapus');
   const [items, setItems] = useState([]);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const [supplierMap, setSupplierMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [refs, setRefs] = useState(EMPTY_REFS);
@@ -89,7 +125,30 @@ export default function DataObatYeloPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
-  const searchTimer = useRef(null);
+
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PAGE_CHUNK);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState(EMPTY_SORT);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [draftSearch, setDraftSearch] = useState('');
+  const [draftSort, setDraftSort] = useState(EMPTY_SORT);
+  const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
+
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickForm, setQuickForm] = useState(EMPTY_FORM);
+  const [quickRefs, setQuickRefs] = useState(EMPTY_REFS);
+  const [quickSubmitting, setQuickSubmitting] = useState(false);
+  const [quickError, setQuickError] = useState('');
+  const [quickKodeLoading, setQuickKodeLoading] = useState(false);
+  const [vmedisBusy, setVmedisBusy] = useState(false);
+
+  const [allSuppliers, setAllSuppliers] = useState([]);
+  const [editSuppliers, setEditSuppliers] = useState([]);
+  const [initialEditSupplierIds, setInitialEditSupplierIds] = useState([]);
+  const [pendingSupplier, setPendingSupplier] = useState(null);
+  const [pricelistItems, setPricelistItems] = useState([]);
+  const [pricelistLoading, setPricelistLoading] = useState(false);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -105,78 +164,218 @@ export default function DataObatYeloPage() {
         listRef('satuan'),
         listRef('grup-substitusi'),
       ]);
-      setRefs({
+      const next = {
         kandungan: kandungan || [],
         golongan: golongan || [],
         satuan: satuan || [],
         'grup-substitusi': grup || [],
-      });
+      };
+      setRefs(next);
+      return next;
     } catch (err) {
       showToast(err.message || 'Gagal memuat data referensi');
+      return EMPTY_REFS;
     }
   }, [showToast]);
 
-  const refreshList = useCallback(
-    async (pageNum = page, searchTerm = search) => {
+  const applyLoaded = useCallback((obatList, map) => {
+    setItems(obatList || []);
+    setSupplierMap(map || {});
+    setObatYeloCache({ items: obatList || [], supplierMap: map || {} });
+  }, []);
+
+  const refreshAll = useCallback(
+    async ({ force = false } = {}) => {
+      if (!force) {
+        const cached = getObatYeloCache();
+        if (cached) {
+          setItems(cached.items || []);
+          setSupplierMap(cached.supplierMap || {});
+          setLoading(false);
+          setLoadError('');
+          return;
+        }
+      }
       setLoading(true);
       setLoadError('');
       try {
-        const result = await listObatYelo({
-          page: pageNum,
-          limit: PAGE_SIZE,
-          search: searchTerm,
-        });
-        setItems(result.data || []);
-        setTotal(result.total ?? 0);
-        setTotalPages(result.totalPages ?? 1);
-        setPage(result.page ?? pageNum);
-        return result.data || [];
+        const [obatResult, map] = await Promise.all([
+          listObatYelo({ all: true }),
+          getSupplierMapAktif(),
+        ]);
+        applyLoaded(obatResult?.data || [], map || {});
       } catch (err) {
         setLoadError(err.message || 'Gagal memuat data obat');
-        return [];
+        setItems([]);
       } finally {
         setLoading(false);
       }
     },
-    [page, search]
+    [applyLoaded]
   );
 
   useEffect(() => {
     loadRefs();
+    refreshAll();
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
-      if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [loadRefs]);
+  }, [loadRefs, refreshAll]);
 
-  useEffect(() => {
-    refreshList(page, search);
-  }, [page, search]); // eslint-disable-line react-hooks/exhaustive-deps
+  const syncItems = useCallback((updater) => {
+    setItems((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      updateObatYeloCacheItems(next);
+      return next;
+    });
+  }, []);
 
-  function handleSearchChange(event) {
-    const value = event.target.value;
-    setSearchInput(value);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      setPage(1);
-      setSearch(value.trim());
-    }, 350);
-  }
+  const filterOptions = useMemo(() => {
+    const supplierSet = new Set();
+    for (const list of Object.values(supplierMap || {})) {
+      for (const s of list || []) {
+        const label = supplierInisialLabel(s);
+        if (label) supplierSet.add(label);
+      }
+    }
 
-  function clearSearch() {
-    setSearchInput('');
-    setSearch('');
-    setPage(1);
-  }
+    const golonganNames = [];
+    const substitusiSet = new Set();
+    const satuanSet = new Set();
+    const konversiSet = new Set();
 
-  function openCreate() {
-    setModalMode('create');
-    setEditing(null);
-    setSelected(null);
-    setForm({ ...EMPTY_FORM });
-    setFormError('');
-    loadRefs();
-  }
+    for (const obat of items) {
+      if (obat.golongan?.nama) golonganNames.push(obat.golongan.nama);
+      if (obat.grup_substitusi?.nama) substitusiSet.add(obat.grup_substitusi.nama);
+      if (obat.satuan_1?.nama) satuanSet.add(obat.satuan_1.nama);
+      if (obat.satuan_2?.nama) satuanSet.add(obat.satuan_2.nama);
+      if (obat.konversi !== null && obat.konversi !== undefined && obat.konversi !== '') {
+        konversiSet.add(String(obat.konversi));
+      }
+    }
+
+    const konversi = [...konversiSet].sort((a, b) => {
+      const na = Number(a);
+      const nb = Number(b);
+      if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+      return a.localeCompare(b, 'id');
+    });
+
+    return {
+      supplier: [...supplierSet].sort((a, b) => a.localeCompare(b, 'id')),
+      golongan: sortGolonganFilterOptions(golonganNames),
+      substitusi: [...substitusiSet].sort((a, b) => a.localeCompare(b, 'id')),
+      satuan: [...satuanSet].sort((a, b) => a.localeCompare(b, 'id')),
+      konversi,
+      status_vmedis: ['Sudah di Vmedis', 'Belum di Vmedis'],
+    };
+  }, [items, supplierMap]);
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = items.filter((obat) => {
+      if (q) {
+        const blob = `${obat.nama_obat || ''} ${obat.kode_obat || ''}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+
+      const fSupplier = filters.supplier || [];
+      if (fSupplier.length > 0) {
+        const pills = (supplierMap[obat.kode_obat] || [])
+          .map(supplierInisialLabel)
+          .filter(Boolean);
+        if (!fSupplier.some((s) => pills.includes(s))) return false;
+      }
+
+      const fGol = filters.golongan || [];
+      if (fGol.length > 0 && !fGol.includes(obat.golongan?.nama)) return false;
+
+      const fSub = filters.substitusi || [];
+      if (fSub.length > 0 && !fSub.includes(obat.grup_substitusi?.nama)) {
+        return false;
+      }
+
+      const fSat = filters.satuan || [];
+      if (fSat.length > 0) {
+        const sats = [obat.satuan_1?.nama, obat.satuan_2?.nama].filter(Boolean);
+        if (!fSat.some((s) => sats.includes(s))) return false;
+      }
+
+      const fKonv = filters.konversi || [];
+      if (fKonv.length > 0) {
+        const k = obat.konversi;
+        if (k === null || k === undefined || k === '') return false;
+        if (!fKonv.includes(String(k))) return false;
+      }
+
+      const fStatus = filters.status_vmedis || [];
+      if (fStatus.length > 0) {
+        const okSudah =
+          fStatus.includes('Sudah di Vmedis') && isSudahDiVmedis(obat);
+        const okBelum =
+          fStatus.includes('Belum di Vmedis') && isBelumDiVmedis(obat);
+        if (!okSudah && !okBelum) return false;
+      }
+
+      return true;
+    });
+
+    if (sort.key === 'nama') {
+      list = [...list].sort((a, b) => {
+        const cmp = String(a.nama_obat || '').localeCompare(
+          String(b.nama_obat || ''),
+          'id'
+        );
+        return sort.direction === 'asc' ? cmp : -cmp;
+      });
+    } else if (sort.key === 'kode') {
+      list = [...list].sort((a, b) =>
+        compareKodeObat(a.kode_obat, b.kode_obat, sort.direction)
+      );
+    }
+
+    return list;
+  }, [items, search, sort, filters, supplierMap]);
+
+  const visibleItems = useMemo(
+    () => filteredItems.slice(0, visibleCount),
+    [filteredItems, visibleCount]
+  );
+
+  const openSheet = () => {
+    setDraftSearch(search);
+    setDraftSort(sort);
+    setDraftFilters({
+      supplier: [...(filters.supplier || [])],
+      golongan: [...(filters.golongan || [])],
+      substitusi: [...(filters.substitusi || [])],
+      satuan: [...(filters.satuan || [])],
+      konversi: [...(filters.konversi || [])],
+      status_vmedis: [...(filters.status_vmedis || [])],
+    });
+    setSheetOpen(true);
+  };
+
+  const handleApply = () => {
+    setSearch(draftSearch);
+    setSort(draftSort);
+    setFilters({
+      supplier: [...(draftFilters.supplier || [])],
+      golongan: [...(draftFilters.golongan || [])],
+      substitusi: [...(draftFilters.substitusi || [])],
+      satuan: [...(draftFilters.satuan || [])],
+      konversi: [...(draftFilters.konversi || [])],
+      status_vmedis: [...(draftFilters.status_vmedis || [])],
+    });
+    setVisibleCount(PAGE_CHUNK);
+    setSheetOpen(false);
+  };
+
+  const handleReset = () => {
+    setDraftSearch('');
+    setDraftSort(EMPTY_SORT);
+    setDraftFilters({ ...EMPTY_FILTERS });
+  };
 
   function openEdit(obat) {
     setModalMode('edit');
@@ -185,6 +384,22 @@ export default function DataObatYeloPage() {
     setForm(obatToForm(obat));
     setFormError('');
     loadRefs();
+
+    const current = (supplierMap[obat.kode_obat] || []).map((s) => ({
+      id: s.id,
+      nama: s.nama,
+      inisial: s.inisial,
+      pricelist_kode_pbf: s.pricelist_kode_pbf || null,
+      matching_id: s.matching_id || null,
+    }));
+    setEditSuppliers(current);
+    setInitialEditSupplierIds(current.map((s) => s.id));
+
+    if (isOwner) {
+      listSuppliers()
+        .then((list) => setAllSuppliers(list || []))
+        .catch((err) => showToast(err.message || 'Gagal memuat supplier'));
+    }
   }
 
   function closeForm() {
@@ -192,6 +407,47 @@ export default function DataObatYeloPage() {
     setModalMode(null);
     setEditing(null);
     setFormError('');
+    setEditSuppliers([]);
+    setInitialEditSupplierIds([]);
+    setPendingSupplier(null);
+    setPricelistItems([]);
+  }
+
+  async function handleSupplierAdd(supplier) {
+    if (editSuppliers.some((s) => s.id === supplier.id)) return;
+    setPendingSupplier(supplier);
+    setPricelistLoading(true);
+    setPricelistItems([]);
+    try {
+      const list = await listLatestPricelist(supplier.id);
+      setPricelistItems(list || []);
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat pricelist');
+      setPendingSupplier(null);
+    } finally {
+      setPricelistLoading(false);
+    }
+  }
+
+  function handlePricelistPicked(row) {
+    if (!pendingSupplier) return;
+    setEditSuppliers((prev) => [
+      ...prev,
+      {
+        id: pendingSupplier.id,
+        nama: pendingSupplier.nama,
+        inisial: pendingSupplier.inisial,
+        pricelist_kode_pbf: row.kode_pbf,
+        matching_id: null,
+        _isNew: true,
+      },
+    ]);
+    setPendingSupplier(null);
+    setPricelistItems([]);
+  }
+
+  function handleSupplierRemove(supplierId) {
+    setEditSuppliers((prev) => prev.filter((s) => s.id !== supplierId));
   }
 
   function handleChange(event) {
@@ -221,27 +477,57 @@ export default function DataObatYeloPage() {
     event.preventDefault();
     setSubmitting(true);
     setFormError('');
-
     try {
       const payload = toPayload(form);
       let saved;
-      if (modalMode === 'create') {
-        saved = await createObatYelo(payload);
-        showToast('Obat berhasil ditambahkan');
-      } else if (modalMode === 'edit' && editing) {
+      if (modalMode === 'edit' && editing) {
         const { kode_obat: _kode, ...rest } = payload;
         saved = await updateObatYelo(editing.kode_obat, rest);
-        showToast('Obat berhasil diperbarui');
-      }
 
+        if (isOwner) {
+          const currentIds = new Set(editSuppliers.map((s) => s.id));
+          const initialIds = new Set(initialEditSupplierIds);
+          const removeSet = new Set(
+            [...initialIds].filter((id) => !currentIds.has(id))
+          );
+          // Re-add supplier yang sebelumnya aktif → tolak dulu matching lama, lalu insert baru
+          for (const s of editSuppliers) {
+            if (s._isNew && initialIds.has(s.id)) removeSet.add(s.id);
+          }
+          const remove_pbf_ids = [...removeSet];
+          const add = editSuppliers
+            .filter((s) => s._isNew && s.pricelist_kode_pbf)
+            .map((s) => ({
+              pricelist_pbf_id: s.id,
+              pricelist_kode_pbf: s.pricelist_kode_pbf,
+            }));
+
+          if (add.length > 0 || remove_pbf_ids.length > 0) {
+            const syncResult = await syncObatSuppliers(editing.kode_obat, {
+              add,
+              remove_pbf_ids,
+            });
+            const nextMap = {
+              ...supplierMap,
+              [editing.kode_obat]: syncResult.suppliers || [],
+            };
+            setSupplierMap(nextMap);
+            updateObatYeloCacheSupplierMap(nextMap);
+          }
+        }
+
+        showToast('Obat berhasil diperbarui');
+        syncItems((prev) =>
+          prev.map((item) =>
+            item.kode_obat === saved.kode_obat ? { ...item, ...saved } : item
+          )
+        );
+        setSelected(saved);
+      }
       setModalMode(null);
       setEditing(null);
-      const list = await refreshList(page, search);
-      if (saved?.kode_obat) {
-        const fresh = list.find((item) => item.kode_obat === saved.kode_obat);
-        if (fresh) setSelected(fresh);
-        else setSelected(saved);
-      }
+      setEditSuppliers([]);
+      setInitialEditSupplierIds([]);
     } catch (err) {
       setFormError(err.message || 'Gagal menyimpan obat');
     } finally {
@@ -255,9 +541,11 @@ export default function DataObatYeloPage() {
     try {
       await deleteObatYelo(deleting.kode_obat);
       showToast('Obat berhasil dihapus');
+      syncItems((prev) =>
+        prev.filter((item) => item.kode_obat !== deleting.kode_obat)
+      );
       setDeleting(null);
       setSelected(null);
-      await refreshList(page, search);
     } catch (err) {
       showToast(err.message || 'Gagal menghapus obat');
     } finally {
@@ -265,40 +553,116 @@ export default function DataObatYeloPage() {
     }
   }
 
-  const searchActions = (
-    <div className="relative flex items-center">
-      <Search
-        className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-text-muted"
-        strokeWidth={2}
-      />
-      <input
-        type="search"
-        value={searchInput}
-        onChange={handleSearchChange}
-        placeholder="Cari nama / kode"
-        className="h-8 w-[148px] rounded-[4px] border border-border-subtle bg-bg-surface py-1 pl-7 pr-7 text-[12px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow sm:w-[200px]"
-        aria-label="Cari obat"
-      />
-      {searchInput ? (
-        <button
-          type="button"
-          onClick={clearSearch}
-          className="absolute right-1.5 text-text-muted hover:text-text-primary"
-          aria-label="Hapus pencarian"
-        >
-          <X className="h-3.5 w-3.5" strokeWidth={2} />
-        </button>
-      ) : null}
-    </div>
-  );
+  async function openQuickCreate() {
+    setQuickOpen(true);
+    setQuickError('');
+    setQuickForm({ ...EMPTY_FORM });
+    setQuickKodeLoading(true);
+    try {
+      const [nextKode, refData] = await Promise.all([
+        getNextKodeApp(),
+        loadRefs(),
+      ]);
+      setQuickForm((prev) => ({
+        ...prev,
+        kode_obat: nextKode?.kode_obat || '',
+      }));
+      setQuickRefs(refData || EMPTY_REFS);
+    } catch (err) {
+      setQuickError(err.message || 'Gagal menyiapkan form');
+    } finally {
+      setQuickKodeLoading(false);
+    }
+  }
+
+  function closeQuickCreate() {
+    if (quickSubmitting) return;
+    setQuickOpen(false);
+    setQuickForm(EMPTY_FORM);
+    setQuickError('');
+  }
+
+  async function handleQuickSubmit(event) {
+    event.preventDefault();
+    setQuickSubmitting(true);
+    setQuickError('');
+    try {
+      const payload = {
+        ...toPayload(quickForm),
+        asal_input: 'app',
+      };
+      const saved = await createObatYelo(payload);
+      showToast('Obat berhasil ditambahkan');
+      syncItems((prev) => {
+        if (prev.some((o) => o.kode_obat === saved.kode_obat)) {
+          return prev.map((o) =>
+            o.kode_obat === saved.kode_obat ? { ...o, ...saved } : o
+          );
+        }
+        return [saved, ...prev];
+      });
+      setQuickOpen(false);
+      setQuickForm(EMPTY_FORM);
+      setSelected(saved);
+    } catch (err) {
+      setQuickError(err.message || 'Gagal menyimpan obat');
+    } finally {
+      setQuickSubmitting(false);
+    }
+  }
+
+  async function handleToggleVmedis(obat, checked) {
+    setVmedisBusy(true);
+    try {
+      const updated = await updateStatusVmedis(obat.kode_obat, checked);
+      syncItems((prev) =>
+        prev.map((item) =>
+          item.kode_obat === updated.kode_obat ? { ...item, ...updated } : item
+        )
+      );
+      setSelected((prev) =>
+        prev?.kode_obat === updated.kode_obat ? { ...prev, ...updated } : prev
+      );
+      showToast(
+        checked ? 'Ditandai sudah di Vmedis' : 'Ditandai belum di Vmedis'
+      );
+    } catch (err) {
+      showToast(err.message || 'Gagal update status Vmedis');
+    } finally {
+      setVmedisBusy(false);
+    }
+  }
+
+  const selectedSuppliers = selected
+    ? supplierMap[selected.kode_obat] || []
+    : [];
 
   return (
     <AppShell
       title="Data Obat Yelo"
-      actions={searchActions}
-      pageAction={{ onClick: openCreate }}
-      navLoading={loading || submitting || deleteSubmitting}
+      actions={
+        <button
+          type="button"
+          onClick={openSheet}
+          disabled={loading}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary hover:bg-bg-surface-hover hover:text-accent-yellow disabled:opacity-50"
+          aria-label="Filter obat"
+        >
+          <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
+        </button>
+      }
+      pageAction={canTambah ? { onClick: openQuickCreate } : null}
+      navLoading={loading || submitting || deleteSubmitting || quickSubmitting}
     >
+      {!loading && !loadError && items.length > 0 ? (
+        <p className="mb-1.5 text-[11px] text-text-muted">
+          Menampilkan {visibleItems.length} dari {filteredItems.length}
+          {filteredItems.length !== items.length
+            ? ` (total ${items.length.toLocaleString('id-ID')})`
+            : ''}
+        </p>
+      ) : null}
+
       {loading ? <ObatYeloSkeleton /> : null}
 
       {!loading && loadError ? (
@@ -306,7 +670,7 @@ export default function DataObatYeloPage() {
           <p className="text-[13px] text-state-error">{loadError}</p>
           <button
             type="button"
-            onClick={() => refreshList(page, search)}
+            onClick={() => refreshAll({ force: true })}
             className="mt-2 text-[11px] font-medium text-accent-yellow underline-offset-2 hover:underline"
           >
             Coba lagi
@@ -317,82 +681,77 @@ export default function DataObatYeloPage() {
       {!loading && !loadError && items.length === 0 ? (
         <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center">
           <p className="text-[13px] text-text-secondary">
-            {search
-              ? `Tidak ada obat yang cocok dengan “${search}”.`
-              : 'Belum ada data obat. Import CSV atau tambah manual.'}
+            Belum ada data obat. Import CSV atau tambah dari tombol +.
           </p>
-          {!search ? (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white sm:w-auto"
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.5} />
-              Tambah Obat
-            </button>
-          ) : null}
         </div>
       ) : null}
 
-      {!loading && !loadError && items.length > 0 ? (
-        <>
-          <p className="mb-1.5 text-[11px] text-text-muted">
-            {total.toLocaleString('id-ID')} obat
-            {search ? ` · filter “${search}”` : ''}
+      {!loading && !loadError && items.length > 0 && filteredItems.length === 0 ? (
+        <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center">
+          <p className="text-[13px] text-text-secondary">
+            Tidak ada hasil untuk filter / pencarian ini.
           </p>
+          <button
+            type="button"
+            onClick={openSheet}
+            className="mt-2 text-[11px] font-medium text-accent-yellow hover:underline"
+          >
+            Ubah filter
+          </button>
+        </div>
+      ) : null}
+
+      {!loading && !loadError && visibleItems.length > 0 ? (
+        <>
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((obat) => (
+            {visibleItems.map((obat) => (
               <ObatYeloCard
                 key={obat.kode_obat}
                 obat={obat}
+                suppliers={supplierMap[obat.kode_obat] || []}
                 onOpen={setSelected}
               />
             ))}
           </div>
 
-          {totalPages > 1 ? (
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="inline-flex items-center gap-1 rounded-[4px] border border-border-subtle px-2.5 py-1.5 text-[12px] text-text-primary hover:bg-bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Prev
-              </button>
-              <span className="text-[12px] text-text-secondary">
-                {page} / {totalPages}
-              </span>
-              <button
-                type="button"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="inline-flex items-center gap-1 rounded-[4px] border border-border-subtle px-2.5 py-1.5 text-[12px] text-text-primary hover:bg-bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
+          {visibleCount < filteredItems.length ? (
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleCount((n) =>
+                  Math.min(n + PAGE_CHUNK, filteredItems.length)
+                )
+              }
+              className="mt-3 inline-flex w-full items-center justify-center rounded-[4px] border border-border-subtle px-3 py-2 text-[13px] text-text-secondary hover:bg-bg-surface-hover"
+            >
+              Lihat Lainnya ({visibleItems.length}/{filteredItems.length})
+            </button>
           ) : null}
         </>
       ) : null}
 
-      {selected && !modalMode && !deleting ? (
+      {selected && !modalMode && !deleting && !quickOpen ? (
         <ObatYeloDetailSheet
           obat={selected}
+          suppliers={selectedSuppliers}
           onClose={() => setSelected(null)}
-          onEdit={openEdit}
-          onDelete={(obat) => {
-            setSelected(null);
-            setDeleting(obat);
-          }}
+          onEdit={canEdit ? openEdit : null}
+          onDelete={
+            canHapus
+              ? (obat) => {
+                  setSelected(null);
+                  setDeleting(obat);
+                }
+              : null
+          }
+          onToggleVmedis={canEdit ? handleToggleVmedis : null}
+          vmedisBusy={vmedisBusy}
         />
       ) : null}
 
-      {modalMode ? (
+      {modalMode === 'edit' ? (
         <ObatYeloFormModal
-          mode={modalMode}
+          mode="edit"
           values={form}
           onChange={handleChange}
           onField={handleField}
@@ -402,6 +761,59 @@ export default function DataObatYeloPage() {
           error={formError}
           onClose={closeForm}
           onSubmit={handleSubmit}
+          showSupplierField={isOwner}
+          supplierOptions={allSuppliers}
+          supplierValue={editSuppliers}
+          onSupplierAdd={handleSupplierAdd}
+          onSupplierRemove={handleSupplierRemove}
+        />
+      ) : null}
+
+      {pendingSupplier ? (
+        <PricelistPickSheet
+          supplier={pendingSupplier}
+          items={pricelistItems}
+          loading={pricelistLoading}
+          onClose={() => {
+            if (!pricelistLoading) {
+              setPendingSupplier(null);
+              setPricelistItems([]);
+            }
+          }}
+          onPick={handlePricelistPicked}
+        />
+      ) : null}
+
+      {quickOpen ? (
+        <TambahObatDariMatchingModal
+          variant="standalone"
+          values={quickForm}
+          onChange={(e) => {
+            const { name, value } = e.target;
+            setQuickForm((prev) => ({ ...prev, [name]: value }));
+          }}
+          onField={(name, value) =>
+            setQuickForm((prev) => ({ ...prev, [name]: value }))
+          }
+          refs={quickRefs}
+          onRefCreated={(jenis, created) => {
+            setQuickRefs((prev) => {
+              const key = jenis;
+              const list = prev[key] || [];
+              if (list.some((item) => item.id === created.id)) return prev;
+              return {
+                ...prev,
+                [key]: [...list, created].sort((a, b) =>
+                  a.nama.localeCompare(b.nama, 'id')
+                ),
+              };
+            });
+          }}
+          submitting={quickSubmitting}
+          error={quickError}
+          onClose={closeQuickCreate}
+          onSubmit={handleQuickSubmit}
+          kodeLoading={quickKodeLoading}
         />
       ) : null}
 
@@ -417,6 +829,47 @@ export default function DataObatYeloPage() {
           onConfirm={handleConfirmDelete}
         />
       ) : null}
+
+      <FilterSortSearchSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        title="Filter Obat Yelo"
+        searchValue={draftSearch}
+        onSearchChange={setDraftSearch}
+        searchPlaceholder="Cari nama / kode obat…"
+        sortOptions={[
+          { key: 'nama', label: 'Nama' },
+          { key: 'kode', label: 'Kode Obat' },
+        ]}
+        sortState={draftSort}
+        onSortChange={setDraftSort}
+        filterGroups={[
+          { key: 'supplier', label: 'Supplier', options: filterOptions.supplier },
+          { key: 'golongan', label: 'Golongan', options: filterOptions.golongan, preserveOrder: true },
+          {
+            key: 'substitusi',
+            label: 'Substitusi',
+            options: filterOptions.substitusi,
+          },
+          { key: 'satuan', label: 'Satuan', options: filterOptions.satuan },
+          {
+            key: 'konversi',
+            label: 'Konversi',
+            options: filterOptions.konversi,
+            preserveOrder: true,
+          },
+          {
+            key: 'status_vmedis',
+            label: 'Status Vmedis',
+            options: filterOptions.status_vmedis,
+            preserveOrder: true,
+          },
+        ]}
+        filterState={draftFilters}
+        onFilterChange={setDraftFilters}
+        onApply={handleApply}
+        onReset={handleReset}
+      />
 
       <Toast message={toast} onClose={() => setToast('')} />
     </AppShell>

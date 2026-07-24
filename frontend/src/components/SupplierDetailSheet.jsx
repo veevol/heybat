@@ -23,13 +23,15 @@ export default function SupplierDetailSheet({
       title={<SupplierModalTitle nama={supplier.nama} inisial={supplier.inisial} />}
       onClose={onClose}
       footer={
-        <button
-          type="button"
-          onClick={() => onEdit(supplier)}
-          className="w-full rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110"
-        >
-          Edit
-        </button>
+        onEdit ? (
+          <button
+            type="button"
+            onClick={() => onEdit(supplier)}
+            className="w-full rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110"
+          >
+            Edit
+          </button>
+        ) : null
       }
     >
       <div className="space-y-3">
@@ -95,21 +97,23 @@ export default function SupplierDetailSheet({
           </div>
         </section>
 
-        <section className="rounded-[4px] border border-state-error/50 p-2.5">
-          <h4 className="text-[13px] font-semibold leading-none text-state-error">
-            Danger Zone
-          </h4>
-          <p className="mt-1 text-[11px] leading-snug text-text-muted">
-            Hapus supplier beserta seluruh jadwalnya. Tidak bisa dibatalkan.
-          </p>
-          <button
-            type="button"
-            onClick={() => onDelete(supplier)}
-            className="mt-2 w-full rounded-[4px] border border-state-error/50 px-3 py-2 text-[13px] font-medium text-state-error hover:bg-state-error/10"
-          >
-            Hapus Supplier
-          </button>
-        </section>
+        {onDelete ? (
+          <section className="rounded-[4px] border border-state-error/50 p-2.5">
+            <h4 className="text-[13px] font-semibold leading-none text-state-error">
+              Danger Zone
+            </h4>
+            <p className="mt-1 text-[11px] leading-snug text-text-muted">
+              Hapus supplier beserta seluruh jadwalnya. Tidak bisa dibatalkan.
+            </p>
+            <button
+              type="button"
+              onClick={() => onDelete(supplier)}
+              className="mt-2 w-full rounded-[4px] border border-state-error/50 px-3 py-2 text-[13px] font-medium text-state-error hover:bg-state-error/10"
+            >
+              Hapus Supplier
+            </button>
+          </section>
+        ) : null}
       </div>
     </SheetModal>
   );

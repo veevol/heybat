@@ -20,6 +20,7 @@ import PricelistSkeleton from '../components/PricelistSkeleton';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import UploadPreviewSheet from '../components/UploadPreviewSheet';
+import { useAuth } from '../context/AuthContext';
 
 const EMPTY_MAPPING = {
   nama_kolom_barang: '',
@@ -43,6 +44,9 @@ const selectClass =
   'w-full rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow';
 
 export default function PricelistPbfPage() {
+  const { hasAccess } = useAuth();
+  const canTambah = hasAccess('pricelist-pbf', 'tambah');
+  const canEdit = hasAccess('pricelist-pbf', 'edit');
   const [suppliers, setSuppliers] = useState([]);
   const [pbfId, setPbfId] = useState('');
   const [template, setTemplate] = useState(null);
@@ -433,54 +437,58 @@ export default function PricelistPbfPage() {
           </select>
         </label>
 
-        <div className="space-y-0.5">
-          <span className="text-[11px] text-text-secondary">Jenis file</span>
-          <div className="flex gap-1">
-            {[
-              { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
-              { id: 'pdf', label: 'PDF', icon: FileText },
-            ].map((opt) => {
-              const Icon = opt.icon;
-              const active = uploadKind === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setUploadKind(opt.id)}
-                  className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
-                    active
-                      ? 'bg-accent-navy text-white'
-                      : 'border border-border-subtle text-text-secondary hover:bg-bg-surface-hover'
-                  }`}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  {opt.label}
-                </button>
-              );
-            })}
+        {canTambah ? (
+          <div className="space-y-0.5">
+            <span className="text-[11px] text-text-secondary">Jenis file</span>
+            <div className="flex gap-1">
+              {[
+                { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
+                { id: 'pdf', label: 'PDF', icon: FileText },
+              ].map((opt) => {
+                const Icon = opt.icon;
+                const active = uploadKind === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setUploadKind(opt.id)}
+                    className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
+                      active
+                        ? 'bg-accent-navy text-white'
+                        : 'border border-border-subtle text-text-secondary hover:bg-bg-surface-hover'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <label
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white ${
-              !pbfId || busy ? 'pointer-events-none opacity-50' : ''
-            }`}
-          >
-            {busy ? <SubmitSpinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
-            {uploadKind === 'pdf' ? 'Upload PDF' : 'Upload Excel'}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={uploadKind === 'pdf' ? '.pdf,application/pdf' : '.xlsx,.xls,.csv'}
-              className="hidden"
-              disabled={!pbfId || busy}
-              onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
-            />
-          </label>
+          {canTambah ? (
+            <label
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white ${
+                !pbfId || busy ? 'pointer-events-none opacity-50' : ''
+              }`}
+            >
+              {busy ? <SubmitSpinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+              {uploadKind === 'pdf' ? 'Upload PDF' : 'Upload Excel'}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={uploadKind === 'pdf' ? '.pdf,application/pdf' : '.xlsx,.xls,.csv'}
+                className="hidden"
+                disabled={!pbfId || busy}
+                onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
+              />
+            </label>
+          ) : null}
 
-          {template ? (
+          {canEdit && template ? (
             <button
               type="button"
               onClick={openEditMapping}
@@ -489,7 +497,9 @@ export default function PricelistPbfPage() {
             >
               Edit Mapping ({template.tipe_sumber === 'pdf' ? 'PDF' : 'Excel'})
             </button>
-          ) : pbfId ? (
+          ) : null}
+
+          {canTambah && !template && pbfId ? (
             <span className="text-[11px] text-state-warning">
               Belum ada template — mapping diminta saat upload pertama
             </span>

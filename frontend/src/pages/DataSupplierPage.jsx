@@ -13,6 +13,7 @@ import SupplierDetailSheet from '../components/SupplierDetailSheet';
 import SupplierFormModal from '../components/SupplierFormModal';
 import SupplierSkeleton from '../components/SupplierSkeleton';
 import Toast from '../components/Toast';
+import { useAuth } from '../context/AuthContext';
 import { defaultJadwal } from '../lib/supplier';
 
 const EMPTY_FORM = {
@@ -47,6 +48,10 @@ function toPayload(form) {
 }
 
 export default function DataSupplierPage() {
+  const { hasAccess } = useAuth();
+  const canTambah = hasAccess('data-supplier', 'tambah');
+  const canEdit = hasAccess('data-supplier', 'edit');
+  const canHapus = hasAccess('data-supplier', 'hapus');
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -189,7 +194,7 @@ export default function DataSupplierPage() {
   return (
     <AppShell
       title="Data Supplier"
-      pageAction={{ onClick: openCreate }}
+      pageAction={canTambah ? { onClick: openCreate } : null}
       navLoading={loading || submitting || deleteSubmitting}
     >
       {loading ? <SupplierSkeleton /> : null}
@@ -212,14 +217,16 @@ export default function DataSupplierPage() {
           <p className="text-[13px] text-text-secondary">
             Belum ada supplier. Tambahkan yang pertama supaya pricelist nanti siap.
           </p>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white sm:w-auto"
-          >
-            <Plus className="h-4 w-4" strokeWidth={2.5} />
-            Tambah Supplier
-          </button>
+          {canTambah ? (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white sm:w-auto"
+            >
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+              Tambah Supplier
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -239,11 +246,15 @@ export default function DataSupplierPage() {
         <SupplierDetailSheet
           supplier={selected}
           onClose={() => setSelected(null)}
-          onEdit={openEdit}
-          onDelete={(supplier) => {
-            setSelected(null);
-            setDeleting(supplier);
-          }}
+          onEdit={canEdit ? openEdit : null}
+          onDelete={
+            canHapus
+              ? (supplier) => {
+                  setSelected(null);
+                  setDeleting(supplier);
+                }
+              : null
+          }
         />
       ) : null}
 

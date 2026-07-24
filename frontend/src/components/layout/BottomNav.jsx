@@ -1,7 +1,9 @@
 import { useEffect, useId, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronRight, Settings, UserRound } from 'lucide-react';
+import { ChevronRight, Settings, Shield, UserRound } from 'lucide-react';
 import SheetModal from '../SheetModal';
+import { useAuth } from '../../context/AuthContext';
+import { canSeeMenu } from '../../lib/permissions';
 import NavCircleLoader from './NavCircleLoader';
 import {
   NAV_PILL_VISIBLE_SLOTS,
@@ -20,13 +22,17 @@ const PILL = 'h-14 w-[min(calc(100vw-2rem),20.5rem)]';
 export default function BottomNav({ pageAction = null, navLoading = false }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { profile } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [akunOpen, setAkunOpen] = useState(false);
   const [circleBusy, setCircleBusy] = useState(false);
   const labelId = useId();
 
   const action = resolvePageAction(location.pathname, pageAction);
-
+  const isOwner = profile?.is_owner === true;
+  const navItems = PRIMARY_NAV_ITEMS.filter((item) =>
+    canSeeMenu(profile, item.menuKode)
+  );
   useEffect(() => {
     if (!expanded) return undefined;
 
@@ -123,7 +129,7 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
                     maxWidth: `calc(${NAV_PILL_VISIBLE_SLOTS} * 3.25rem)`,
                   }}
                 >
-                  {PRIMARY_NAV_ITEMS.map((item) => {
+                  {navItems.map((item) => {
                     const Icon = item.icon;
                     const active = item.match(location.pathname);
 
@@ -180,6 +186,21 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
           onClose={() => setAkunOpen(false)}
         >
           <div className="space-y-1">
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={() => goTo('/kelola-akses')}
+                className="flex w-full items-center gap-3 rounded-[4px] px-2 py-2.5 text-left hover:bg-bg-surface-hover"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-bg-base text-accent-yellow">
+                  <Shield className="h-4 w-4" />
+                </span>
+                <span className="flex-1 text-[13px] text-text-primary">
+                  Kelola Akses
+                </span>
+                <ChevronRight className="h-4 w-4 text-text-muted" />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => goTo('/pengaturan')}

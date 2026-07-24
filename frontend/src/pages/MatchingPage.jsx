@@ -10,15 +10,42 @@ import {
   markTidakCocok,
   refreshKandidat,
 } from '../api/matching';
+import {
+  createObatDariMatching,
+  getNextKodeApp,
+} from '../api/obatYelo';
+import { listRef } from '../api/refData';
 import AppShell from '../components/layout/AppShell';
 import SearchableObatSelect from '../components/SearchableObatSelect';
 import SubmitSpinner from '../components/SubmitSpinner';
+import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingModal';
 import Toast from '../components/Toast';
+import { useAuth } from '../context/AuthContext';
 import {
   formatHarga,
   formatSatuanKonversi,
   formatScorePercent,
 } from '../lib/matchingUi';
+import { toTitleCaseNamaObat } from '../lib/obatYelo';
+
+const EMPTY_TAMBAH_FORM = {
+  kode_obat: '',
+  nama_obat: '',
+  kandungan_id: '',
+  golongan_id: '',
+  satuan_1_id: '',
+  satuan_2_id: '',
+  grup_substitusi_id: '',
+  konversi: '',
+  min_jual: '',
+};
+
+const EMPTY_REFS = {
+  kandungan: [],
+  golongan: [],
+  satuan: [],
+  'grup-substitusi': [],
+};
 
 const selectClass =
   'w-full rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow';
@@ -74,6 +101,11 @@ function resolveObatMeta(kode, katalogMap, kandidat = []) {
 }
 
 export default function MatchingPage() {
+  const { hasAccess } = useAuth();
+  const canUsulkan = hasAccess('matching', 'usulkan');
+  const canVerifikasi = hasAccess('matching', 'verifikasi');
+  const canEditMatching = hasAccess('matching', 'edit');
+  const canTambahObat = hasAccess('data-obat-yelo', 'tambah');
   const [suppliers, setSuppliers] = useState([]);
   const [pbfId, setPbfId] = useState('');
   const [katalog, setKatalog] = useState([]);
@@ -90,6 +122,12 @@ export default function MatchingPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState(null);
   const [toast, setToast] = useState('');
+  const [tambahRow, setTambahRow] = useState(null);
+  const [tambahForm, setTambahForm] = useState(EMPTY_TAMBAH_FORM);
+  const [tambahRefs, setTambahRefs] = useState(EMPTY_REFS);
+  const [tambahSubmitting, setTambahSubmitting] = useState(false);
+  const [tambahError, setTambahError] = useState('');
+  const [tambahKodeLoading, setTambahKodeLoading] = useState(false);
   const toastTimer = useRef(null);
   const pollTimer = useRef(null);
 
@@ -304,6 +342,105 @@ export default function MatchingPage() {
     }
   };
 
+  const openTambahObat = async (row) => {
+    setTambahRow(row);
+    setTambahError('');
+    setTambahForm({
+      ...EMPTY_TAMBAH_FORM,
+      nama_obat: toTitleCaseNamaObat(row.nama_barang || ''),
+    });
+    setTambahKodeLoading(true);
+    try {
+      const [nextKode, kandungan, golongan, satuan, grup] = await Promise.all([
+        getNextKodeApp(),
+        listRef('kandungan'),
+        listRef('golongan'),
+        listRef('satuan'),
+        listRef('grup-substitusi'),
+      ]);
+      setTambahForm((prev) => ({
+        ...prev,
+        kode_obat: nextKode?.kode_obat || '',
+      }));
+      setTambahRefs({
+        kandungan: kandungan || [],
+        golongan: golongan || [],
+        satuan: satuan || [],
+        'grup-substitusi': grup || [],
+      });
+    } catch (err) {
+      setTambahError(err.message || 'Gagal menyiapkan form');
+    } finally {
+      setTambahKodeLoading(false);
+    }
+  };
+
+  const closeTambahObat = () => {
+    if (tambahSubmitting) return;
+    setTambahRow(null);
+    setTambahForm(EMPTY_TAMBAH_FORM);
+    setTambahError('');
+  };
+
+  const handleTambahField = (e) => {
+    const { name, value } = e.target;
+    setTambahForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleTambahRefCreated = (jenis, created) => {
+    const key =
+      jenis === 'grup-substitusi' ? 'grup-substitusi' : jenis;
+    setTambahRefs((prev) => ({
+      ...prev,
+      [key]: [...(prev[key] || []), created],
+    }));
+  };
+
+  const handleSimpanAjukan = async (e) => {
+    e.preventDefault();
+    if (!tambahRow || !pbfId) return;
+    setTambahSubmitting(true);
+    setTambahError('');
+    try {
+      const numOrNull = (v) => {
+        if (v === '' || v === null || v === undefined) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const result = await createObatDariMatching({
+        kode_obat: tambahForm.kode_obat.trim(),
+        nama_obat: tambahForm.nama_obat.trim(),
+        kandungan_id: tambahForm.kandungan_id || null,
+        golongan_id: tambahForm.golongan_id || null,
+        satuan_1_id: tambahForm.satuan_1_id || null,
+        satuan_2_id: tambahForm.satuan_2_id || null,
+        grup_substitusi_id: tambahForm.grup_substitusi_id || null,
+        konversi: numOrNull(tambahForm.konversi),
+        min_jual: numOrNull(tambahForm.min_jual),
+        pricelist_pbf_id: pbfId,
+        pricelist_kode_pbf: tambahRow.kode_pbf,
+      });
+
+      const obat = result?.obat;
+      if (obat) {
+        setKatalog((prev) => {
+          if (prev.some((o) => o.kode_obat === obat.kode_obat)) return prev;
+          return [...prev, obat];
+        });
+      }
+
+      setSkipped((prev) => new Set(prev).add(tambahRow.kode_pbf));
+      setTotalUnmatched((n) => Math.max(0, n - 1));
+      setTambahRow(null);
+      setTambahForm(EMPTY_TAMBAH_FORM);
+      showToast('Obat dibuat & diajukan — menunggu verifikasi');
+    } catch (err) {
+      setTambahError(err.message || 'Gagal menyimpan obat');
+    } finally {
+      setTambahSubmitting(false);
+    }
+  };
+
   const cacheLabel = formatRelative(cacheDihitungPada);
 
   return (
@@ -312,13 +449,17 @@ export default function MatchingPage() {
       navLoading={loading || katalogLoading || refreshing}
       actions={
         <div className="flex items-center gap-2 text-[11px]">
-          <Link
-            to="/matching/verifikasi"
-            className="text-accent-yellow hover:underline"
-          >
-            Verifikasi
-          </Link>
-          <span className="text-text-muted">·</span>
+          {canVerifikasi ? (
+            <>
+              <Link
+                to="/matching/verifikasi"
+                className="text-accent-yellow hover:underline"
+              >
+                Verifikasi
+              </Link>
+              <span className="text-text-muted">·</span>
+            </>
+          ) : null}
           <Link
             to="/matching/belum-matching"
             className="text-accent-yellow hover:underline"
@@ -347,7 +488,7 @@ export default function MatchingPage() {
         </select>
         <button
           type="button"
-          disabled={!pbfId || refreshing}
+          disabled={!pbfId || refreshing || !canEditMatching}
           onClick={handleRefreshKandidat}
           className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] font-semibold text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
         >
@@ -437,7 +578,7 @@ export default function MatchingPage() {
                 </div>
 
                 {/* Section 2 — Obat Yelo terpilih & sugesti */}
-                <div className="mt-2 rounded-[4px] border border-accent-yellow p-1.5">
+                <div className="mt-2 rounded-[4px] border border-border-subtle p-1.5">
                   {selectedMeta ? (
                     <div className="flex items-center gap-2 rounded-[4px] bg-accent-yellow px-2 py-1.5">
                       <span className="min-w-0 flex-1 truncate text-[13px] font-bold leading-snug text-bg-base">
@@ -473,7 +614,7 @@ export default function MatchingPage() {
                             }
                             className="flex w-full items-center gap-2 rounded-[4px] border border-border-subtle bg-bg-base px-2 py-1.5 text-left hover:bg-bg-surface-hover"
                           >
-                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text-primary">
+                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-accent-yellow">
                               {k.nama_obat}
                             </span>
                             {badge ? (
@@ -495,29 +636,48 @@ export default function MatchingPage() {
                       options={katalog}
                       value={selectedKode}
                       onChange={(kode) => handleSelect(row.kode_pbf, kode)}
+                      borderClassName="border-accent-yellow"
                     />
                   </div>
                 </div>
 
                 {/* Section 3 — Aksi */}
-                <div className="mt-2 flex flex-wrap justify-end gap-2">
-                  <button
-                    type="button"
-                    disabled={busy || !selectedKode}
-                    onClick={() => handlePilih(row)}
-                    className="inline-flex items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
-                  >
-                    {busy && <SubmitSpinner className="h-3.5 w-3.5" />}
-                    Ajukan
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => handleSkip(row.kode_pbf)}
-                    className="rounded-[4px] border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
-                  >
-                    No Data
-                  </button>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  {canTambahObat && canUsulkan ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => openTambahObat(row)}
+                      className="rounded-[4px] border border-dashed border-accent-yellow/70 px-3 py-1.5 text-[13px] font-semibold text-accent-yellow hover:bg-accent-yellow/10 disabled:opacity-50"
+                    >
+                      + Data Obat
+                    </button>
+                  ) : (
+                    <span />
+                  )}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {canUsulkan ? (
+                      <button
+                        type="button"
+                        disabled={busy || !selectedKode}
+                        onClick={() => handlePilih(row)}
+                        className="inline-flex items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
+                      >
+                        {busy && <SubmitSpinner className="h-3.5 w-3.5" />}
+                        Ajukan
+                      </button>
+                    ) : null}
+                    {canUsulkan ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleSkip(row.kode_pbf)}
+                        className="rounded-[4px] border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
+                      >
+                        No Data
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </article>
             );
@@ -538,6 +698,24 @@ export default function MatchingPage() {
           Muat lagi ({items.length}/{totalUnmatched})
         </button>
       )}
+
+      {tambahRow ? (
+        <TambahObatDariMatchingModal
+          pricelistRow={tambahRow}
+          values={tambahForm}
+          onChange={handleTambahField}
+          onField={(name, value) =>
+            setTambahForm((prev) => ({ ...prev, [name]: value }))
+          }
+          refs={tambahRefs}
+          onRefCreated={handleTambahRefCreated}
+          submitting={tambahSubmitting}
+          error={tambahError}
+          onClose={closeTambahObat}
+          onSubmit={handleSimpanAjukan}
+          kodeLoading={tambahKodeLoading}
+        />
+      ) : null}
 
       {toast ? <Toast message={toast} onClose={() => setToast('')} /> : null}
     </AppShell>

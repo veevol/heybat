@@ -2,8 +2,10 @@ import {
   FileSpreadsheet,
   GitCompareArrows,
   LayoutGrid,
+  Package,
   Pill,
   Plus,
+  ShoppingCart,
   UserRound,
 } from 'lucide-react';
 
@@ -19,6 +21,7 @@ export const PRIMARY_NAV_ITEMS = [
     id: 'supplier',
     label: 'Supplier',
     to: '/data-supplier',
+    menuKode: 'data-supplier',
     match: (pathname) => pathname.startsWith('/data-supplier'),
     icon: LayoutGrid,
     type: 'link',
@@ -27,6 +30,7 @@ export const PRIMARY_NAV_ITEMS = [
     id: 'pricelist',
     label: 'Pricelist',
     to: '/pricelist-pbf',
+    menuKode: 'pricelist-pbf',
     match: (pathname) => pathname.startsWith('/pricelist-pbf'),
     icon: FileSpreadsheet,
     type: 'link',
@@ -35,6 +39,7 @@ export const PRIMARY_NAV_ITEMS = [
     id: 'obat-yelo',
     label: 'Obat Yelo',
     to: '/data-obat-yelo',
+    menuKode: 'data-obat-yelo',
     match: (pathname) => pathname.startsWith('/data-obat-yelo'),
     icon: Pill,
     type: 'link',
@@ -43,15 +48,37 @@ export const PRIMARY_NAV_ITEMS = [
     id: 'matching',
     label: 'Matching',
     to: '/matching',
+    menuKode: 'matching',
     match: (pathname) => pathname.startsWith('/matching'),
     icon: GitCompareArrows,
     type: 'link',
   },
   {
+    id: 'penjualan',
+    label: 'Penjualan',
+    to: '/penjualan',
+    menuKode: 'penjualan',
+    match: (pathname) => pathname.startsWith('/penjualan'),
+    icon: ShoppingCart,
+    type: 'link',
+  },
+  {
+    id: 'stok',
+    label: 'Stok',
+    to: '/stok',
+    menuKode: 'stok',
+    match: (pathname) => pathname.startsWith('/stok'),
+    icon: Package,
+    type: 'link',
+  },
+  {
     id: 'akun',
     label: 'Akun',
+    menuKode: null,
     match: (pathname) =>
-      pathname.startsWith('/akun') || pathname.startsWith('/pengaturan'),
+      pathname.startsWith('/akun') ||
+      pathname.startsWith('/pengaturan') ||
+      pathname.startsWith('/kelola-akses'),
     icon: UserRound,
     type: 'akun-sheet',
   },
@@ -77,7 +104,7 @@ export const PAGE_ACTION_SLOTS = [
     match: (pathname) => pathname.startsWith('/data-obat-yelo'),
     label: 'Tambah',
     icon: Plus,
-    ariaLabel: 'Tambah Obat',
+    ariaLabel: 'Tambah Obat Baru',
   },
 ];
 

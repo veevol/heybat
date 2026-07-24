@@ -18,6 +18,8 @@ export default function SearchableObatSelect({
   value,
   onChange,
   placeholder = 'Cari obat Yelo…',
+  /** Border class for closed trigger; default subtle, Matching uses yellow. */
+  borderClassName = 'border-border-subtle',
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -82,7 +84,7 @@ export default function SearchableObatSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-left outline-none focus:border-accent-yellow"
+        className={`flex w-full items-center gap-2 rounded-[4px] border ${borderClassName} bg-bg-surface px-3 py-1.5 text-left outline-none focus:border-accent-yellow`}
       >
         {selected ? (
           renderLabel(selected)

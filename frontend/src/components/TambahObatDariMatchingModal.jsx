@@ -1,8 +1,7 @@
+import { useEffect, useState } from 'react';
 import SubmitSpinner from './SubmitSpinner';
 import SheetModal from './SheetModal';
 import RefSelectWithAdd from './RefSelectWithAdd';
-import SearchableSupplierMultiSelect from './SearchableSupplierMultiSelect';
-import { ObatModalTitle } from './ObatYeloDetailSheet';
 import { createRef } from '../api/refData';
 
 const inputClass =
@@ -13,7 +12,6 @@ function Field({
   name,
   value,
   onChange,
-  disabled = false,
   required = false,
   placeholder = '',
   hint = null,
@@ -30,9 +28,7 @@ function Field({
         name={name}
         value={value}
         onChange={onChange}
-        disabled={disabled}
         required={required}
-        readOnly={disabled}
         placeholder={placeholder}
         className={inputClass}
         step={type === 'number' ? 'any' : undefined}
@@ -43,12 +39,12 @@ function Field({
 }
 
 /**
- * Form create/edit obat Yelo.
- * Urutan edit mengikuti detail card (tanpa Stok & Harga).
- * Field Supplier (multi) hanya untuk owner — dikontrol via showSupplierField.
+ * Modal "Tambah Obat" — dari Matching (dengan pricelist) atau standalone dari Data Obat.
+ * @param {{ variant?: 'matching' | 'standalone' }} props
  */
-export default function ObatYeloFormModal({
-  mode,
+export default function TambahObatDariMatchingModal({
+  variant = 'matching',
+  pricelistRow = null,
   values,
   onChange,
   onField,
@@ -58,20 +54,19 @@ export default function ObatYeloFormModal({
   error,
   onClose,
   onSubmit,
-  showSupplierField = false,
-  supplierOptions = [],
-  supplierValue = [],
-  onSupplierAdd,
-  onSupplierRemove,
+  kodeLoading = false,
+  submitLabel = null,
+  kodeHint = null,
 }) {
-  const isEdit = mode === 'edit';
-  const title = isEdit ? (
-    <ObatModalTitle nama={values.nama_obat} kode={values.kode_obat} />
-  ) : (
-    <h2 className="text-[15px] font-semibold leading-none text-text-primary">
-      Tambah Obat
-    </h2>
-  );
+  const [localError, setLocalError] = useState('');
+  const isStandalone = variant === 'standalone';
+
+  useEffect(() => {
+    setLocalError('');
+  }, [values, error]);
+
+  const namaPricelist = pricelistRow?.nama_barang || '—';
+  const satuanPricelist = pricelistRow?.satuan || '';
 
   function makeCreateHandler(jenis) {
     return async (nama) => {
@@ -80,6 +75,49 @@ export default function ObatYeloFormModal({
       return created;
     };
   }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!values.kode_obat?.trim()) {
+      setLocalError('Kode obat wajib diisi');
+      return;
+    }
+    if (!values.nama_obat?.trim()) {
+      setLocalError('Nama obat wajib diisi');
+      return;
+    }
+    onSubmit(e);
+  }
+
+  const title = isStandalone ? (
+    <h2 className="text-[15px] font-semibold leading-none text-text-primary">
+      Tambah Obat Baru
+    </h2>
+  ) : (
+    <div className="min-w-0">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-accent-yellow">
+        Tambah Obat
+      </p>
+      <h2 className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-text-primary">
+        {namaPricelist}
+        {satuanPricelist ? (
+          <span className="font-normal text-text-secondary"> {satuanPricelist}</span>
+        ) : null}
+      </h2>
+    </div>
+  );
+
+  const displayError = localError || error;
+  const buttonLabel =
+    submitLabel || (isStandalone ? 'Simpan' : 'Simpan & Ajukan');
+  const kodeFieldHint =
+    kodeHint ||
+    'Otomatis APP+tanggal+urut — bisa diedit manual.';
+  const kodePlaceholder = kodeLoading
+    ? 'Menghasilkan kode…'
+    : kodeHint
+      ? 'Kode dari Vmedis'
+      : 'APP…';
 
   return (
     <SheetModal
@@ -98,29 +136,28 @@ export default function ObatYeloFormModal({
           </button>
           <button
             type="submit"
-            form="obat-yelo-form"
-            disabled={submitting}
-            className="inline-flex w-full items-center justify-center rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-80 sm:w-auto sm:min-w-24"
+            form="tambah-obat-matching-form"
+            disabled={submitting || kodeLoading}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-80 sm:w-auto sm:min-w-28"
           >
-            {submitting ? <SubmitSpinner /> : 'Simpan'}
+            {submitting ? <SubmitSpinner /> : buttonLabel}
           </button>
         </div>
       }
     >
-      <form id="obat-yelo-form" onSubmit={onSubmit} className="space-y-1.5">
+      <form
+        id="tambah-obat-matching-form"
+        onSubmit={handleSubmit}
+        className="space-y-1.5"
+      >
         <Field
           label="Kode Obat"
           name="kode_obat"
           value={values.kode_obat}
           onChange={onChange}
-          required={!isEdit}
-          disabled={isEdit}
-          placeholder="Contoh: OBT2606030003"
-          hint={
-            isEdit
-              ? 'Kode obat terkunci setelah dibuat.'
-              : 'Kode dari Vmedis / input manual — tidak bisa diubah setelah disimpan.'
-          }
+          required
+          placeholder={kodePlaceholder}
+          hint={kodeFieldHint}
         />
         <Field
           label="Nama Obat"
@@ -131,16 +168,31 @@ export default function ObatYeloFormModal({
           placeholder="Nama obat"
         />
 
-        <Field
-          label="Min Jual"
-          name="min_jual"
-          type="number"
-          value={values.min_jual}
-          onChange={onChange}
-          placeholder="0"
+        <p className="pt-1 text-[10px] text-text-muted">
+          Field di bawah opsional — boleh dilewati, lengkapi nanti di Data Obat Yelo.
+        </p>
+
+        <RefSelectWithAdd
+          label="Kandungan"
+          value={values.kandungan_id}
+          options={refs.kandungan}
+          onChange={(id) => onField('kandungan_id', id)}
+          onCreate={makeCreateHandler('kandungan')}
+          allowEmpty
+          emptyLabel="Tidak ada"
         />
 
-        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+        <RefSelectWithAdd
+          label="Golongan"
+          value={values.golongan_id}
+          options={refs.golongan}
+          onChange={(id) => onField('golongan_id', id)}
+          onCreate={makeCreateHandler('golongan')}
+          allowEmpty
+          emptyLabel="Tidak ada"
+        />
+
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           <RefSelectWithAdd
             label="Satuan 1"
             value={values.satuan_1_id}
@@ -158,6 +210,9 @@ export default function ObatYeloFormModal({
             onChange={onChange}
             placeholder="0"
           />
+        </div>
+
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           <RefSelectWithAdd
             label="Satuan 2"
             value={values.satuan_2_id}
@@ -167,20 +222,18 @@ export default function ObatYeloFormModal({
             allowEmpty
             emptyLabel="Tidak ada"
           />
+          <Field
+            label="Min Jual"
+            name="min_jual"
+            type="number"
+            value={values.min_jual}
+            onChange={onChange}
+            placeholder="0"
+          />
         </div>
 
         <RefSelectWithAdd
-          label="Kandungan"
-          value={values.kandungan_id}
-          options={refs.kandungan}
-          onChange={(id) => onField('kandungan_id', id)}
-          onCreate={makeCreateHandler('kandungan')}
-          allowEmpty
-          emptyLabel="Tidak ada"
-        />
-
-        <RefSelectWithAdd
-          label="Substitusi"
+          label="Grup Substitusi"
           value={values.grup_substitusi_id}
           options={refs['grup-substitusi']}
           onChange={(id) => onField('grup_substitusi_id', id)}
@@ -189,31 +242,9 @@ export default function ObatYeloFormModal({
           emptyLabel="Tidak ada substitusi"
         />
 
-        <RefSelectWithAdd
-          label="Golongan"
-          value={values.golongan_id}
-          options={refs.golongan}
-          onChange={(id) => onField('golongan_id', id)}
-          onCreate={makeCreateHandler('golongan')}
-          allowEmpty
-          emptyLabel="Tidak ada"
-        />
-
-        {showSupplierField ? (
-          <SearchableSupplierMultiSelect
-            options={supplierOptions}
-            value={supplierValue}
-            onAdd={onSupplierAdd}
-            onRemove={onSupplierRemove}
-            disabled={submitting}
-            placeholder="Tambah supplier…"
-            hint="Hanya owner. Tambah → matching langsung terverifikasi. Hapus → status ditolak (riwayat tetap)."
-          />
-        ) : null}
-
-        {error ? (
+        {displayError ? (
           <p className="rounded-[4px] border border-state-error/40 bg-state-error/10 px-2 py-1.5 text-[12px] text-state-error">
-            {error}
+            {displayError}
           </p>
         ) : null}
       </form>
