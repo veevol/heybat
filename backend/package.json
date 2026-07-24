@@ -19,6 +19,7 @@
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "pdf.js-extract": "^1.0.1",
+    "string-similarity": "^4.0.4",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

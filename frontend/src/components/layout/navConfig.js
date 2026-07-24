@@ -1,5 +1,6 @@
 import {
   FileSpreadsheet,
+  GitCompareArrows,
   LayoutGrid,
   Pill,
   Plus,
@@ -36,6 +37,14 @@ export const PRIMARY_NAV_ITEMS = [
     to: '/data-obat-yelo',
     match: (pathname) => pathname.startsWith('/data-obat-yelo'),
     icon: Pill,
+    type: 'link',
+  },
+  {
+    id: 'matching',
+    label: 'Matching',
+    to: '/matching',
+    match: (pathname) => pathname.startsWith('/matching'),
+    icon: GitCompareArrows,
     type: 'link',
   },
   {
