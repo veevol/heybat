@@ -5,6 +5,8 @@ const cors = require('cors');
 const suppliersRouter = require('./routes/suppliers');
 const pricelistTemplateRouter = require('./routes/pricelistTemplate');
 const pricelistRouter = require('./routes/pricelist');
+const obatYeloRouter = require('./routes/obatYelo');
+const refDataRouter = require('./routes/refData');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -58,6 +60,8 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/pricelist-template', pricelistTemplateRouter);
 app.use('/api/pricelist', pricelistRouter);
+app.use('/api/obat-yelo', obatYeloRouter);
+app.use('/api/ref', refDataRouter);
 
 app.use((err, _req, res, _next) => {
   console.error('[unhandled]', err);

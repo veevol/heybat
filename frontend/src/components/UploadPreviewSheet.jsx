@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
 
@@ -8,15 +9,46 @@ function formatNumber(value) {
   return new Intl.NumberFormat('id-ID').format(num);
 }
 
+function scaleValue(value, enabled) {
+  if (!enabled) return value;
+  if (value === null || value === undefined || value === '') return value;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return value;
+  return num * 1000;
+}
+
 export default function UploadPreviewSheet({
   sample = [],
   warnings = null,
   barisValid = 0,
+  scaleBy1000 = false,
+  onScaleBy1000Change,
   onConfirm,
   onRetry,
   submitting = false,
 }) {
+  const [localScale, setLocalScale] = useState(Boolean(scaleBy1000));
   const hasWarning = Boolean(warnings?.ada_peringatan);
+
+  useEffect(() => {
+    setLocalScale(Boolean(scaleBy1000));
+  }, [scaleBy1000]);
+
+  const displaySample = useMemo(
+    () =>
+      sample.map((row) => ({
+        ...row,
+        qty: scaleValue(row.qty, localScale),
+        harga_dasar: scaleValue(row.harga_dasar, localScale),
+      })),
+    [sample, localScale]
+  );
+
+  function handleToggle(event) {
+    const next = event.target.checked;
+    setLocalScale(next);
+    onScaleBy1000Change?.(next);
+  }
 
   return (
     <SheetModal
@@ -68,6 +100,12 @@ export default function UploadPreviewSheet({
                   angka
                 </li>
               ) : null}
+              {warnings.baris_digabung > 0 ? (
+                <li>
+                  {warnings.baris_digabung} baris lanjutan digabung ke nama obat di atasnya
+                  (cek badge “Nama digabung” — salah gabung? ulangi mapping)
+                </li>
+              ) : null}
             </ul>
           </div>
         ) : null}
@@ -83,6 +121,11 @@ export default function UploadPreviewSheet({
             Baris valid:{' '}
             <strong className="text-text-primary">{barisValid}</strong>
           </span>
+          {warnings?.baris_digabung > 0 ? (
+            <span className="text-accent-yellow">
+              Digabung: {warnings.baris_digabung}
+            </span>
+          ) : null}
         </div>
 
         <div className="overflow-hidden rounded-[4px] border border-border-subtle">
@@ -96,7 +139,7 @@ export default function UploadPreviewSheet({
               </tr>
             </thead>
             <tbody>
-              {sample.length === 0 ? (
+              {displaySample.length === 0 ? (
                 <tr>
                   <td
                     colSpan={4}
@@ -106,38 +149,91 @@ export default function UploadPreviewSheet({
                   </td>
                 </tr>
               ) : (
-                sample.map((row) => (
-                  <tr
-                    key={`${row.__row}-${row.nama_barang}`}
-                    className="border-t border-border-subtle/60 align-top"
-                  >
-                    <td className="px-2 py-1.5 text-text-primary">
-                      <div className="font-medium leading-snug">{row.nama_barang}</div>
-                      {row.catatan_kondisi ? (
-                        <div className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">
-                          {row.catatan_kondisi}
-                        </div>
-                      ) : null}
-                    </td>
+                displaySample.map((row) => {
+                  const merged = Boolean(row.__flags?.nama_digabung);
+                  return (
+                    <tr
+                      key={`${row.__row}-${row.nama_barang}`}
+                      className={`border-t align-top ${
+                        merged
+                          ? 'border-accent-yellow/40 bg-accent-yellow/10'
+                          : 'border-border-subtle/60'
+                      }`}
+                    >
+                      <td className="px-2 py-1.5 text-text-primary">
+                        <div className="font-medium leading-snug">{row.nama_barang}</div>
+                        {merged ? (
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                            <span className="rounded-[4px] bg-accent-yellow px-1.5 py-0.5 text-[10px] font-semibold leading-none text-bg-base">
+                              Nama digabung
+                              {row.__flags?.baris_lanjutan_count
+                                ? ` ×${row.__flags.baris_lanjutan_count}`
+                                : ''}
+                            </span>
+                            {row.__lanjutan_rows?.length ? (
+                              <span className="text-[10px] text-text-muted">
+                                +baris {row.__lanjutan_rows.join(', ')}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {row.catatan_kondisi ? (
+                          <div className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">
+                            {row.catatan_kondisi}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-2 py-1.5 text-text-secondary">
+                        {row.satuan || '—'}
+                      </td>
                     <td className="px-2 py-1.5 text-text-secondary">
-                      {row.satuan || '—'}
+                      <span className="inline-flex flex-wrap items-center gap-1">
+                        {formatNumber(row.qty)}
+                        {row.qty_estimasi || row.__flags?.qty_estimasi ? (
+                          <span className="rounded-[4px] bg-state-warning/20 px-1 py-0.5 text-[10px] font-semibold leading-none text-state-warning">
+                            Estimasi
+                          </span>
+                        ) : null}
+                      </span>
                     </td>
-                    <td className="px-2 py-1.5 text-text-secondary">
-                      {formatNumber(row.qty)}
-                    </td>
-                    <td className="px-2 py-1.5 text-text-secondary">
-                      {formatNumber(row.harga_dasar)}
-                    </td>
-                  </tr>
-                ))
+                      <td className="px-2 py-1.5 text-text-secondary">
+                        {formatNumber(row.harga_dasar)}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
 
-        {sample.length > 0 && barisValid > sample.length ? (
+        {displaySample.length > 0 && barisValid > displaySample.length ? (
           <p className="text-[10px] text-text-muted">
-            Menampilkan {sample.length} dari {barisValid} baris valid.
+            Menampilkan {displaySample.length} dari {barisValid} baris valid.
+          </p>
+        ) : null}
+
+        <label className="flex cursor-pointer items-start gap-2 rounded-[4px] border border-border-subtle bg-bg-base px-2.5 py-2">
+          <input
+            type="checkbox"
+            checked={localScale}
+            onChange={handleToggle}
+            disabled={submitting}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-accent-yellow"
+          />
+          <span className="text-[12px] leading-snug text-text-secondary">
+            Kalikan nilai Harga &amp; Qty dengan 1000?{' '}
+            <span className="text-text-muted">
+              (aktifkan kalau file ini hasil konversi PDF dan angkanya kelihatan terlalu
+              kecil, misal harga muncul sebagai 13,8 padahal aslinya 13.800)
+            </span>
+          </span>
+        </label>
+
+        {localScale ? (
+          <p className="text-[11px] leading-snug text-state-warning">
+            Skala ×1000 aktif — angka di tabel di atas sudah dikalikan; semua baris valid
+            akan disimpan dengan nilai yang sama.
           </p>
         ) : null}
       </div>

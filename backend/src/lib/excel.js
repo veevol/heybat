@@ -204,6 +204,7 @@ function extractMappedRows(rows, mapping) {
       nama_barang: nama,
       satuan: colSatuan === undefined ? null : cellToString(row[colSatuan]) || null,
       qty: qtyParsed.value,
+      qty_estimasi: false,
       harga_dasar: hargaParsed.value,
       catatan_kondisi: buildCatatanKondisi(rowObj, usedHeaders),
       __row: i + 1,

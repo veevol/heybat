@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "import:obat-yelo": "node scripts/import-obat-yelo.js"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +18,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "multer": "^2.2.0",
+    "pdf.js-extract": "^1.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

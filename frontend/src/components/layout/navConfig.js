@@ -1,6 +1,7 @@
 import {
   FileSpreadsheet,
   LayoutGrid,
+  Pill,
   Plus,
   UserRound,
 } from 'lucide-react';
@@ -30,6 +31,14 @@ export const PRIMARY_NAV_ITEMS = [
     type: 'link',
   },
   {
+    id: 'obat-yelo',
+    label: 'Obat Yelo',
+    to: '/data-obat-yelo',
+    match: (pathname) => pathname.startsWith('/data-obat-yelo'),
+    icon: Pill,
+    type: 'link',
+  },
+  {
     id: 'akun',
     label: 'Akun',
     match: (pathname) =>
@@ -53,6 +62,13 @@ export const PAGE_ACTION_SLOTS = [
     label: 'Tambah',
     icon: Plus,
     ariaLabel: 'Tambah Supplier',
+  },
+  {
+    id: 'tambah-obat-yelo',
+    match: (pathname) => pathname.startsWith('/data-obat-yelo'),
+    label: 'Tambah',
+    icon: Plus,
+    ariaLabel: 'Tambah Obat',
   },
 ];
 

@@ -115,12 +115,17 @@ export default function MappingSheet({
         <label className="block space-y-0.5">
           <span className="text-[11px] text-text-secondary">Baris mulai data (1-indexed)</span>
           <input
-            type="number"
-            min={1}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             value={values.baris_mulai_data}
-            onChange={(e) =>
-              onChange({ ...values, baris_mulai_data: Number(e.target.value) || 1 })
-            }
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, '');
+              onChange({
+                ...values,
+                baris_mulai_data: Math.max(1, Number(digits) || 1),
+              });
+            }}
             className={selectClass}
           />
         </label>

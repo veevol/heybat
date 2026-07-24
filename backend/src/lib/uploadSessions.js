@@ -34,6 +34,13 @@ function getUploadSession(id) {
   return session;
 }
 
+function updateUploadSession(id, patch) {
+  const session = getUploadSession(id);
+  if (!session) return null;
+  Object.assign(session, patch);
+  return session;
+}
+
 function consumeUploadSession(id) {
   const session = getUploadSession(id);
   if (!session) return null;
@@ -44,5 +51,6 @@ function consumeUploadSession(id) {
 module.exports = {
   createUploadSession,
   getUploadSession,
+  updateUploadSession,
   consumeUploadSession,
 };

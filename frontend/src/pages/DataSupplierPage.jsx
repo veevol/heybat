@@ -262,7 +262,7 @@ export default function DataSupplierPage() {
 
       {deleting ? (
         <ConfirmDeleteModal
-          supplierName={deleting.nama}
+          confirmName={deleting.nama}
           submitting={deleteSubmitting}
           onClose={() => {
             if (!deleteSubmitting) setDeleting(null);

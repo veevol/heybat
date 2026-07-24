@@ -74,12 +74,28 @@ export async function parsePricelistPreview({
   return parseResponse(res);
 }
 
+/** Simpan pilihan ×1000 ke sesi preview (opsional, sync real-time) */
+export async function setPricelistSessionScale(sessionId, scaleBy1000) {
+  const res = await fetch(apiUrl('/api/pricelist/session-scale'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      scale_by_1000: Boolean(scaleBy1000),
+    }),
+  });
+  return parseResponse(res);
+}
+
 /** Tahap 2: konfirmasi simpan dari session preview */
-export async function confirmPricelistUpload(sessionId) {
+export async function confirmPricelistUpload(sessionId, { scaleBy1000 = false } = {}) {
   const res = await fetch(apiUrl('/api/pricelist/confirm'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      scale_by_1000: Boolean(scaleBy1000),
+    }),
   });
   return parseResponse(res);
 }
@@ -88,5 +104,56 @@ export async function listLatestPricelist(pbfId) {
   const res = await fetch(
     apiUrl(`/api/pricelist?pbf_id=${encodeURIComponent(pbfId)}`)
   );
+  return parseResponse(res);
+}
+
+/** Native PDF: extract → needs_mapping atau preview session */
+export async function parsePricelistPdfPreview({
+  pbfId,
+  file,
+  diuploadOleh = null,
+  forceMapping = false,
+}) {
+  const form = new FormData();
+  form.append('pbf_id', pbfId);
+  form.append('file', file);
+  if (diuploadOleh) form.append('diupload_oleh', diuploadOleh);
+  if (forceMapping) form.append('force_mapping', 'true');
+  const res = await fetch(apiUrl('/api/pricelist/parse-pdf-preview'), {
+    method: 'POST',
+    body: form,
+  });
+  return parseResponse(res);
+}
+
+/** Simpan mapping posisi PDF + kembalikan preview session */
+export async function savePricelistPdfMapping({
+  pbfId,
+  sessionId,
+  kolomPosisi,
+  barisMulaiData = 1,
+  formatAngka = 'id',
+}) {
+  const res = await fetch(apiUrl('/api/pricelist/save-pdf-mapping'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pbf_id: pbfId,
+      session_id: sessionId,
+      kolom_posisi: kolomPosisi,
+      baris_mulai_data: barisMulaiData,
+      format_angka: formatAngka,
+    }),
+  });
+  return parseResponse(res);
+}
+
+/** Update format_angka saja (template PDF yang sudah ada, tanpa mapping ulang) */
+export async function updatePricelistPdfFormat(pbfId, formatAngka) {
+  const res = await fetch(apiUrl(`/api/pricelist-template/${pbfId}/format-angka`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format_angka: formatAngka }),
+  });
   return parseResponse(res);
 }

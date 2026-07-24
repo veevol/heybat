@@ -14,3 +14,6 @@ backend/dist/
 tmp-*.xlsx
 backend/tmp-*.xlsx
 *.xlsx
+
+# CSV import payloads (local only)
+backend/data/*.csv

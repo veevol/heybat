@@ -30,9 +30,16 @@ export default function PricelistCard({ item }) {
                 <strong className="font-semibold text-text-primary">{item.satuan}</strong>
               </span>
             ) : null}
-            <span>
+            <span className="inline-flex flex-wrap items-center gap-1">
               Qty{' '}
-              <strong className="font-semibold text-text-primary">{formatNumber(item.qty)}</strong>
+              <strong className="font-semibold text-text-primary">
+                {formatNumber(item.qty)}
+              </strong>
+              {item.qty_estimasi ? (
+                <span className="rounded-[4px] bg-state-warning/20 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-state-warning">
+                  Estimasi
+                </span>
+              ) : null}
             </span>
             <span>
               Harga{' '}

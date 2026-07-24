@@ -54,6 +54,8 @@ router.post('/', async (req, res) => {
 
     const payload = {
       pbf_id: pbfId,
+      tipe_sumber: 'excel',
+      kolom_posisi: null,
       nama_kolom_barang: namaKolomBarang,
       nama_kolom_qty: normalizeText(req.body?.nama_kolom_qty),
       nama_kolom_harga: normalizeText(req.body?.nama_kolom_harga),
@@ -96,6 +98,8 @@ router.put('/:pbfId', async (req, res) => {
     }
 
     const payload = {
+      tipe_sumber: 'excel',
+      kolom_posisi: null,
       nama_kolom_barang: namaKolomBarang,
       nama_kolom_qty: normalizeText(req.body?.nama_kolom_qty),
       nama_kolom_harga: normalizeText(req.body?.nama_kolom_harga),
@@ -121,6 +125,55 @@ router.put('/:pbfId', async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error('[PUT template]', err);
+    return res.status(500).json({ error: 'Terjadi kesalahan server' });
+  }
+});
+
+function normalizeFormatAngka(value) {
+  const raw = String(value || 'id').trim().toLowerCase();
+  return raw === 'intl' ? 'intl' : 'id';
+}
+
+// PATCH /api/pricelist-template/:pbfId/format-angka — ubah format angka PDF tanpa mapping ulang
+router.patch('/:pbfId/format-angka', async (req, res) => {
+  try {
+    const { pbfId } = req.params;
+    const formatAngka = normalizeFormatAngka(req.body?.format_angka);
+
+    const { data: existing, error: findError } = await supabase
+      .from('pricelist_template_mapping')
+      .select('id, tipe_sumber')
+      .eq('pbf_id', pbfId)
+      .maybeSingle();
+
+    if (findError) {
+      console.error('[PATCH format-angka] find', findError);
+      return res.status(500).json({ error: 'Gagal mengambil template' });
+    }
+    if (!existing) {
+      return res.status(404).json({ error: 'Template tidak ditemukan' });
+    }
+    if (existing.tipe_sumber !== 'pdf') {
+      return res.status(400).json({
+        error: 'format_angka hanya untuk template PDF',
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('pricelist_template_mapping')
+      .update({ format_angka: formatAngka })
+      .eq('pbf_id', pbfId)
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('[PATCH format-angka]', error);
+      return res.status(500).json({ error: 'Gagal memperbarui format angka' });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    console.error('[PATCH format-angka]', err);
     return res.status(500).json({ error: 'Terjadi kesalahan server' });
   }
 });
