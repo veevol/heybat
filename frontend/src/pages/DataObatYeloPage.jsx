@@ -297,6 +297,7 @@ export default function DataObatYeloPage() {
       title="Data Obat Yelo"
       actions={searchActions}
       pageAction={{ onClick: openCreate }}
+      navLoading={loading || submitting || deleteSubmitting}
     >
       {loading ? <ObatYeloSkeleton /> : null}
 

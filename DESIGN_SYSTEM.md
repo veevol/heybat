@@ -71,6 +71,13 @@ Line-height rapat (1.35 untuk body, 1.2 untuk heading) — bukan longgar. Tujuan
 
 ## 4. Komponen Dasar
 
+**Bottom Nav circle loader:**
+
+- Collapsed control (kanan-bawah): kotak `rounded-[4px]` (bukan full circle) + logo Heybat saat idle.
+- Saat `navLoading`: logo fade-out (~180ms), lalu Morph Loader (bentuk SVG morph + wave) terus berputar.
+- Saat loading selesai: tunggu titik siklus morph (event `animationiteration`) baru logo fade-in — jangan potong animasi di tengah bentuk.
+- Warna morph: `accent-yellow` di atas circle `bg-surface` saat busy (circle idle tetap kuning + logo).
+
 **Button:**
 
 - Primary: background `accent-navy`, teks putih, radius 4px, padding 8px/12px. Hover: sedikit lebih terang.

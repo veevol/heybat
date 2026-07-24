@@ -190,6 +190,7 @@ export default function DataSupplierPage() {
     <AppShell
       title="Data Supplier"
       pageAction={{ onClick: openCreate }}
+      navLoading={loading || submitting || deleteSubmitting}
     >
       {loading ? <SupplierSkeleton /> : null}
 

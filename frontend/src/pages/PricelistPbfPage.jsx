@@ -415,7 +415,7 @@ export default function PricelistPbfPage() {
         : null;
 
   return (
-    <AppShell title="Pricelist PBF">
+    <AppShell title="Pricelist PBF" navLoading={loadingList || busy}>
       <section className="mb-3 space-y-2 rounded-[4px] border border-border-subtle bg-bg-surface p-2.5">
         <label className="block space-y-0.5">
           <span className="text-[11px] text-text-secondary">Pilih PBF</span>

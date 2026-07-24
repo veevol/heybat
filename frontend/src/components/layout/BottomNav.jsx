@@ -1,14 +1,15 @@
 import { useEffect, useId, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronRight, Menu, Settings, UserRound } from 'lucide-react';
+import { ChevronRight, Settings, UserRound } from 'lucide-react';
 import SheetModal from '../SheetModal';
+import NavCircleLoader from './NavCircleLoader';
 import {
   NAV_PILL_VISIBLE_SLOTS,
   PRIMARY_NAV_ITEMS,
   resolvePageAction,
 } from './navConfig';
 
-/** ~56px circle */
+/** Collapsed control */
 const CIRCLE = 'h-14 w-14';
 /**
  * Fixed outer width for expanded pill (~5 nav slots + optional action).
@@ -16,11 +17,12 @@ const CIRCLE = 'h-14 w-14';
  */
 const PILL = 'h-14 w-[min(calc(100vw-2rem),20.5rem)]';
 
-export default function BottomNav({ pageAction = null }) {
+export default function BottomNav({ pageAction = null, navLoading = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [akunOpen, setAkunOpen] = useState(false);
+  const [circleBusy, setCircleBusy] = useState(false);
   const labelId = useId();
 
   const action = resolvePageAction(location.pathname, pageAction);
@@ -93,7 +95,11 @@ export default function BottomNav({ pageAction = null }) {
               'pointer-events-auto absolute bottom-0 flex items-center overflow-hidden shadow-lg shadow-black/45 transition-all duration-300 ease-out',
               expanded
                 ? `${PILL} left-1/2 -translate-x-1/2 gap-0.5 rounded-full border border-border-subtle/80 bg-bg-surface/95 py-1 pl-1.5 pr-1.5 backdrop-blur-md`
-                : `${CIRCLE} right-0 translate-x-0 justify-center rounded-full bg-accent-yellow ring-1 ring-black/10`,
+                : `${CIRCLE} right-0 translate-x-0 justify-center rounded-[4px] ring-1 ${
+                    circleBusy
+                      ? 'bg-bg-surface ring-border-subtle'
+                      : 'bg-accent-yellow ring-black/10'
+                  }`,
             ].join(' ')}
           >
             {!expanded ? (
@@ -103,9 +109,10 @@ export default function BottomNav({ pageAction = null }) {
                 className="flex h-full w-full items-center justify-center text-bg-base"
                 aria-expanded={false}
                 aria-controls={labelId}
-                aria-label="Buka menu navigasi"
+                aria-label={navLoading ? 'Memuat data… Buka menu navigasi' : 'Buka menu navigasi'}
+                aria-busy={navLoading || circleBusy}
               >
-                <Menu className="h-6 w-6" strokeWidth={2.5} />
+                <NavCircleLoader isLoading={navLoading} onBusyChange={setCircleBusy} />
               </button>
             ) : (
               <>
