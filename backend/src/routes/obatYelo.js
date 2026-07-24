@@ -1,7 +1,14 @@
 const express = require('express');
 const { supabase } = require('../db');
+const {
+  requireAuth,
+  requireApproved,
+  requireMenuAksi,
+} = require('../middleware/auth');
 
 const router = express.Router();
+
+router.use(requireAuth, requireApproved);
 
 const OBAT_SELECT = `
   kode_obat,
@@ -13,6 +20,8 @@ const OBAT_SELECT = `
   satuan_2_id,
   min_jual,
   grup_substitusi_id,
+  asal_input,
+  sudah_ditambah_vmedis,
   created_at,
   updated_at,
   kandungan:ref_kandungan ( id, nama ),
@@ -55,7 +64,86 @@ function isCheckViolation(error) {
   );
 }
 
-function buildPayload(body, { requireKode = false } = {}) {
+function actorFromReq(req) {
+  return (
+    normalizeText(req.headers['x-heybat-actor']) ||
+    normalizeText(req.body?.actor) ||
+    'staf'
+  );
+}
+
+/** YYMMDD in Asia/Jakarta (WIB). */
+function todayYymmddWib(date = new Date()) {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  // en-CA with 2-digit year → "YY-MM-DD"
+  const parts = fmt.formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  return `${get('year')}${get('month')}${get('day')}`;
+}
+
+function appKodePrefix(yymmdd = todayYymmddWib()) {
+  return `APP${yymmdd}`;
+}
+
+/**
+ * Next APP{YYMMDD}{XXXX}: XXXX = max urutan numerik hari ini + 1
+ * (lebih aman dari count murni jika ada kode yang dihapus/diedit manual).
+ */
+async function nextAppKodeObat() {
+  const prefix = appKodePrefix();
+  const rows = [];
+  let from = 0;
+  const pageSize = 1000;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('obat_yelo')
+      .select('kode_obat')
+      .like('kode_obat', `${prefix}%`)
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+
+  let maxSeq = 0;
+  for (const row of rows) {
+    const kode = String(row.kode_obat || '');
+    if (!kode.startsWith(prefix)) continue;
+    const suffix = kode.slice(prefix.length);
+    if (/^\d{1,4}$/.test(suffix)) {
+      maxSeq = Math.max(maxSeq, parseInt(suffix, 10));
+    }
+  }
+
+  const seq = maxSeq + 1;
+  if (seq > 9999) {
+    throw new Error('Kuota kode obat APP hari ini penuh (9999)');
+  }
+  return `${prefix}${String(seq).padStart(4, '0')}`;
+}
+
+async function fetchAllObatRows(buildQuery, pageSize = 1000) {
+  const all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    all.push(...chunk);
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+function buildPayload(body, { requireKode = false, allowAsalInput = false } = {}) {
   const nama_obat = normalizeText(body?.nama_obat);
   if (!nama_obat) {
     return { error: 'Nama obat wajib diisi' };
@@ -89,6 +177,18 @@ function buildPayload(body, { requireKode = false } = {}) {
     payload.kode_obat = kode_obat;
   }
 
+  if (allowAsalInput) {
+    const asal = normalizeText(body?.asal_input)?.toLowerCase();
+    if (asal === 'app') {
+      payload.asal_input = 'app';
+      payload.sudah_ditambah_vmedis = false;
+    } else if (asal === 'vmedis') {
+      payload.asal_input = 'vmedis';
+    } else if (asal) {
+      return { error: "asal_input harus 'vmedis' atau 'app'" };
+    }
+  }
+
   return { payload };
 }
 
@@ -101,13 +201,40 @@ async function fetchObatByKode(kodeObat) {
   return { data, error };
 }
 
-// GET /api/obat-yelo?page=1&limit=50&search=
-router.get('/', async (req, res) => {
+// GET /api/obat-yelo?page=1&limit=50&search=  |  ?all=1 untuk tarik semua
+router.get('/', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => {
   try {
+    const wantAll =
+      String(req.query.all || '').toLowerCase() === '1' ||
+      String(req.query.all || '').toLowerCase() === 'true';
+    const search = normalizeText(req.query.search);
+
+    if (wantAll) {
+      const data = await fetchAllObatRows(() => {
+        let q = supabase
+          .from('obat_yelo')
+          .select(OBAT_SELECT)
+          .order('nama_obat', { ascending: true });
+        if (search) {
+          const escaped = search.replace(/[%_]/g, '\\$&');
+          q = q.or(
+            `nama_obat.ilike.%${escaped}%,kode_obat.ilike.%${escaped}%`
+          );
+        }
+        return q;
+      });
+      return res.json({
+        data,
+        page: 1,
+        limit: data.length,
+        total: data.length,
+        totalPages: 1,
+      });
+    }
+
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
     const limitRaw = parseInt(String(req.query.limit || '50'), 10) || 50;
     const limit = Math.min(100, Math.max(1, limitRaw));
-    const search = normalizeText(req.query.search);
     const from = (page - 1) * limit;
     const to = from + limit - 1;
 
@@ -143,9 +270,51 @@ router.get('/', async (req, res) => {
     return res.status(500).json({ error: 'Terjadi kesalahan server' });
   }
 });
+// GET /api/obat-yelo/next-kode-app — harus sebelum /:kodeObat
+router.get('/next-kode-app', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => {
+  try {
+    const kode_obat = await nextAppKodeObat();
+    return res.json({
+      kode_obat,
+      prefix: appKodePrefix(),
+      yymmdd: todayYymmddWib(),
+    });
+  } catch (err) {
+    console.error('[GET /obat-yelo/next-kode-app]', err);
+    return res.status(500).json({ error: err.message || 'Gagal membuat kode obat' });
+  }
+});
+
+// GET /api/obat-yelo/laporan-baru?status=belum|sudah
+router.get('/laporan-baru', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => {
+  try {
+    const status = String(req.query.status || 'belum').toLowerCase();
+    if (status !== 'belum' && status !== 'sudah') {
+      return res.status(400).json({ error: "status harus 'belum' atau 'sudah'" });
+    }
+
+    const sudah = status === 'sudah';
+    const { data, error } = await supabase
+      .from('obat_yelo')
+      .select(OBAT_SELECT)
+      .eq('asal_input', 'app')
+      .eq('sudah_ditambah_vmedis', sudah)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[GET /obat-yelo/laporan-baru]', error);
+      return res.status(500).json({ error: 'Gagal mengambil laporan obat baru' });
+    }
+
+    return res.json({ data: data ?? [], status });
+  } catch (err) {
+    console.error('[GET /obat-yelo/laporan-baru]', err);
+    return res.status(500).json({ error: 'Terjadi kesalahan server' });
+  }
+});
 
 // GET /api/obat-yelo/:kodeObat
-router.get('/:kodeObat', async (req, res) => {
+router.get('/:kodeObat', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => {
   try {
     const kodeObat = decodeURIComponent(req.params.kodeObat);
     const { data, error } = await fetchObatByKode(kodeObat);
@@ -164,9 +333,12 @@ router.get('/:kodeObat', async (req, res) => {
 });
 
 // POST /api/obat-yelo
-router.post('/', async (req, res) => {
+router.post('/', requireMenuAksi('data-obat-yelo', 'tambah'), async (req, res) => {
   try {
-    const built = buildPayload(req.body, { requireKode: true });
+    const built = buildPayload(req.body, {
+      requireKode: true,
+      allowAsalInput: true,
+    });
     if (built.error) {
       return res.status(400).json({ error: built.error });
     }
@@ -197,8 +369,166 @@ router.post('/', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/obat-yelo/dari-matching
+ * Buat obat baru (asal_input=app) + matching menunggu_verifikasi dalam satu aksi.
+ */
+router.post('/dari-matching', requireMenuAksi('data-obat-yelo', 'tambah'), async (req, res) => {
+  try {
+    const pbfId = normalizeText(req.body?.pricelist_pbf_id);
+    const kodePbf = normalizeText(req.body?.pricelist_kode_pbf);
+    const actor = actorFromReq(req);
+
+    if (!pbfId || !kodePbf) {
+      return res.status(400).json({
+        error: 'pricelist_pbf_id dan pricelist_kode_pbf wajib diisi',
+      });
+    }
+
+    const built = buildPayload(req.body, { requireKode: true });
+    if (built.error) {
+      return res.status(400).json({ error: built.error });
+    }
+
+    const obatPayload = {
+      ...built.payload,
+      asal_input: 'app',
+      sudah_ditambah_vmedis: false,
+    };
+
+    const { data: created, error: insertError } = await supabase
+      .from('obat_yelo')
+      .insert(obatPayload)
+      .select('kode_obat')
+      .single();
+
+    if (insertError) {
+      if (isUniqueViolation(insertError)) {
+        return res.status(409).json({ error: 'Kode obat sudah dipakai' });
+      }
+      console.error('[POST /obat-yelo/dari-matching] insert obat', insertError);
+      return res.status(500).json({ error: 'Gagal membuat obat' });
+    }
+
+    const kodeObat = created.kode_obat;
+    const now = new Date().toISOString();
+
+    const { data: existingActive, error: existError } = await supabase
+      .from('matching')
+      .select('id, status')
+      .eq('pricelist_pbf_id', pbfId)
+      .eq('pricelist_kode_pbf', kodePbf)
+      .eq('kode_obat_yelo', kodeObat)
+      .in('status', ['menunggu_verifikasi', 'terverifikasi'])
+      .maybeSingle();
+
+    if (existError) {
+      console.error('[POST /obat-yelo/dari-matching] check matching', existError);
+      return res.status(500).json({
+        error: 'Obat dibuat, gagal cek matching — lengkapi matching manual',
+        obat: { kode_obat: kodeObat },
+      });
+    }
+
+    if (existingActive) {
+      const { data: obat } = await fetchObatByKode(kodeObat);
+      return res.status(201).json({
+        obat,
+        matching: null,
+        warning: `Pasangan matching sudah ada dengan status ${existingActive.status}`,
+      });
+    }
+
+    const { data: matching, error: matchError } = await supabase
+      .from('matching')
+      .insert({
+        kode_obat_yelo: kodeObat,
+        pricelist_pbf_id: pbfId,
+        pricelist_kode_pbf: kodePbf,
+        status: 'menunggu_verifikasi',
+        dipilih_oleh: actor,
+        tanggal_dipilih: now,
+        diusulkan_oleh: 'sistem',
+        tanggal_diusulkan: now,
+      })
+      .select('id, kode_obat_yelo, pricelist_pbf_id, pricelist_kode_pbf, status, dipilih_oleh')
+      .single();
+
+    if (matchError) {
+      console.error('[POST /obat-yelo/dari-matching] insert matching', matchError);
+      const { data: obat } = await fetchObatByKode(kodeObat);
+      return res.status(500).json({
+        error: 'Obat dibuat, gagal membuat matching — ajukan matching manual',
+        obat,
+      });
+    }
+
+    const { data: obat, error: fetchError } = await fetchObatByKode(kodeObat);
+    if (fetchError) {
+      console.error('[POST /obat-yelo/dari-matching] fetch', fetchError);
+      return res.status(201).json({ obat: { kode_obat: kodeObat }, matching });
+    }
+
+    return res.status(201).json({ obat, matching });
+  } catch (err) {
+    console.error('[POST /obat-yelo/dari-matching]', err);
+    return res.status(500).json({ error: 'Terjadi kesalahan server' });
+  }
+});
+
+// PUT /api/obat-yelo/:kodeObat/status-vmedis
+router.put('/:kodeObat/status-vmedis', requireMenuAksi('data-obat-yelo', 'edit'), async (req, res) => {
+  try {
+    const kodeObat = decodeURIComponent(req.params.kodeObat);
+    if (typeof req.body?.sudah_ditambah_vmedis !== 'boolean') {
+      return res.status(400).json({
+        error: 'sudah_ditambah_vmedis harus boolean',
+      });
+    }
+
+    const { data: existing, error: findError } = await supabase
+      .from('obat_yelo')
+      .select('kode_obat, asal_input')
+      .eq('kode_obat', kodeObat)
+      .maybeSingle();
+
+    if (findError) {
+      console.error('[PUT /obat-yelo/status-vmedis] find', findError);
+      return res.status(500).json({ error: 'Gagal mengambil data obat' });
+    }
+    if (!existing) {
+      return res.status(404).json({ error: 'Obat tidak ditemukan' });
+    }
+    if (existing.asal_input !== 'app') {
+      return res.status(400).json({
+        error: 'Status Vmedis hanya untuk obat yang dibuat dari app',
+      });
+    }
+
+    const { error } = await supabase
+      .from('obat_yelo')
+      .update({ sudah_ditambah_vmedis: req.body.sudah_ditambah_vmedis })
+      .eq('kode_obat', kodeObat);
+
+    if (error) {
+      console.error('[PUT /obat-yelo/status-vmedis]', error);
+      return res.status(500).json({ error: 'Gagal memperbarui status Vmedis' });
+    }
+
+    const { data, error: fetchError } = await fetchObatByKode(kodeObat);
+    if (fetchError) {
+      console.error('[PUT /obat-yelo/status-vmedis] fetch', fetchError);
+      return res.status(500).json({ error: 'Update berhasil, gagal memuat ulang data' });
+    }
+    return res.json(data);
+  } catch (err) {
+    console.error('[PUT /obat-yelo/status-vmedis]', err);
+    return res.status(500).json({ error: 'Terjadi kesalahan server' });
+  }
+});
+
 // PUT /api/obat-yelo/:kodeObat
-router.put('/:kodeObat', async (req, res) => {
+router.put('/:kodeObat', requireMenuAksi('data-obat-yelo', 'edit'), async (req, res) => {
   try {
     const kodeObat = decodeURIComponent(req.params.kodeObat);
 
@@ -258,7 +588,7 @@ router.put('/:kodeObat', async (req, res) => {
 });
 
 // DELETE /api/obat-yelo/:kodeObat
-router.delete('/:kodeObat', async (req, res) => {
+router.delete('/:kodeObat', requireMenuAksi('data-obat-yelo', 'hapus'), async (req, res) => {
   try {
     const kodeObat = decodeURIComponent(req.params.kodeObat);
     const { data, error } = await supabase

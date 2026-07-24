@@ -1,7 +1,14 @@
 const express = require('express');
 const { supabase } = require('../db');
+const {
+  requireAuth,
+  requireApproved,
+  requireMenuAksi,
+} = require('../middleware/auth');
 
 const router = express.Router();
+
+router.use(requireAuth, requireApproved);
 
 function normalizeText(value) {
   if (value === undefined || value === null) return null;
@@ -16,7 +23,7 @@ function normalizeBaris(value) {
 }
 
 // GET /api/pricelist-template/:pbfId
-router.get('/:pbfId', async (req, res) => {
+router.get('/:pbfId', requireMenuAksi('pricelist-pbf', 'lihat'), async (req, res) => {
   try {
     const { pbfId } = req.params;
     const { data, error } = await supabase
@@ -40,7 +47,7 @@ router.get('/:pbfId', async (req, res) => {
 });
 
 // POST /api/pricelist-template
-router.post('/', async (req, res) => {
+router.post('/', requireMenuAksi('pricelist-pbf', 'tambah'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.body?.pbf_id);
     const namaKolomBarang = normalizeText(req.body?.nama_kolom_barang);
@@ -85,7 +92,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/pricelist-template/:pbfId
-router.put('/:pbfId', async (req, res) => {
+router.put('/:pbfId', requireMenuAksi('pricelist-pbf', 'edit'), async (req, res) => {
   try {
     const { pbfId } = req.params;
     const namaKolomBarang = normalizeText(req.body?.nama_kolom_barang);
@@ -135,7 +142,7 @@ function normalizeFormatAngka(value) {
 }
 
 // PATCH /api/pricelist-template/:pbfId/format-angka — ubah format angka PDF tanpa mapping ulang
-router.patch('/:pbfId/format-angka', async (req, res) => {
+router.patch('/:pbfId/format-angka', requireMenuAksi('pricelist-pbf', 'edit'), async (req, res) => {
   try {
     const { pbfId } = req.params;
     const formatAngka = normalizeFormatAngka(req.body?.format_angka);

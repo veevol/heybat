@@ -1,6 +1,11 @@
 const express = require('express');
 const { supabase } = require('../db');
 const {
+  requireAuth,
+  requireApproved,
+  requireMenuAksi,
+} = require('../middleware/auth');
+const {
   SELECT_WITH_JADWAL,
   normalizeText,
   normalizeGender,
@@ -10,6 +15,8 @@ const {
 } = require('./supplierHelpers');
 
 const router = express.Router();
+
+router.use(requireAuth, requireApproved);
 
 function isUniqueViolation(error) {
   if (!error) return false;
@@ -46,7 +53,7 @@ async function applyJadwalUpdates(supplierId, jadwalRows) {
 }
 
 // GET /api/suppliers
-router.get('/', async (_req, res) => {
+router.get('/', requireMenuAksi('data-supplier', 'lihat'), async (_req, res) => {
   try {
     const { data, error } = await supabase
       .from('supplier')
@@ -66,7 +73,7 @@ router.get('/', async (_req, res) => {
 });
 
 // POST /api/suppliers
-router.post('/', async (req, res) => {
+router.post('/', requireMenuAksi('data-supplier', 'tambah'), async (req, res) => {
   try {
     const nama = normalizeText(req.body?.nama);
     const inisial = normalizeText(req.body?.inisial);
@@ -138,7 +145,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/suppliers/:id/jadwal  (must be before /:id)
-router.put('/:id/jadwal', async (req, res) => {
+router.put('/:id/jadwal', requireMenuAksi('data-supplier', 'edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const parsed = normalizeJadwalPayload(req.body?.jadwal ?? req.body);
@@ -181,7 +188,7 @@ router.put('/:id/jadwal', async (req, res) => {
 });
 
 // PUT /api/suppliers/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireMenuAksi('data-supplier', 'edit'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -268,7 +275,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/suppliers/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireMenuAksi('data-supplier', 'hapus'), async (req, res) => {
   try {
     const { id } = req.params;
 

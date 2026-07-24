@@ -1,8 +1,16 @@
 const express = require('express');
 const stringSimilarity = require('string-similarity');
 const { supabase } = require('../db');
+const {
+  requireAuth,
+  requireApproved,
+  requireOwner,
+  requireMenuAksi,
+} = require('../middleware/auth');
 
 const router = express.Router();
+
+router.use(requireAuth, requireApproved);
 
 /** Status yang membuat kode_pbf tidak muncul di antrean matching staf. */
 const HIDDEN_FROM_KANDIDAT = ['menunggu_verifikasi', 'terverifikasi'];
@@ -60,22 +68,12 @@ async function fetchAllRows(buildQuery, pageSize = 1000) {
 
 function actorFromReq(req) {
   return (
+    normalizeText(req.user?.nama) ||
+    normalizeText(req.user?.email) ||
     normalizeText(req.headers['x-heybat-actor']) ||
     normalizeText(req.body?.actor) ||
     'staf'
   );
-}
-
-/**
- * TODO: batasi akses ke owner/is_owner setelah sistem akses (Group) dibangun.
- * MATCHING_OPEN_VERIFY default true — tetap terbuka untuk sekarang.
- * Sementara: izinkan jika header x-heybat-is-owner=1 ATAU env MATCHING_OPEN_VERIFY=true.
- */
-function canVerifyMatching(req) {
-  const open =
-    String(process.env.MATCHING_OPEN_VERIFY ?? 'true').toLowerCase() !== 'false';
-  const headerOwner = String(req.headers['x-heybat-is-owner'] || '') === '1';
-  return open || headerOwner;
 }
 
 async function fetchLatestPricelistByPbf(pbfId) {
@@ -248,7 +246,7 @@ function jobPublicView(job) {
 }
 
 // GET /api/matching/katalog-obat
-router.get('/katalog-obat', async (_req, res) => {
+router.get('/katalog-obat', requireMenuAksi('matching', 'lihat'), async (_req, res) => {
   try {
     const data = await fetchAllObatYeloLight();
     return res.json(data);
@@ -259,7 +257,7 @@ router.get('/katalog-obat', async (_req, res) => {
 });
 
 // GET /api/matching/refresh-kandidat/:pbfId/status
-router.get('/refresh-kandidat/:pbfId/status', (req, res) => {
+router.get('/refresh-kandidat/:pbfId/status', requireMenuAksi('matching', 'lihat'), (req, res) => {
   const pbfId = normalizeText(req.params.pbfId);
   const job = refreshJobs.get(pbfId);
   if (!job) {
@@ -269,7 +267,7 @@ router.get('/refresh-kandidat/:pbfId/status', (req, res) => {
 });
 
 // POST /api/matching/refresh-kandidat/:pbfId — hitung ulang cache (async)
-router.post('/refresh-kandidat/:pbfId', async (req, res) => {
+router.post('/refresh-kandidat/:pbfId', requireMenuAksi('matching', 'edit'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.params.pbfId);
     if (!pbfId) {
@@ -326,7 +324,7 @@ router.post('/refresh-kandidat/:pbfId', async (req, res) => {
 });
 
 // GET /api/matching/kandidat/:pbfId — baca dari cache; hitung on-the-fly jika belum ada
-router.get('/kandidat/:pbfId', async (req, res) => {
+router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.params.pbfId);
     if (!pbfId) {
@@ -426,36 +424,56 @@ router.get('/kandidat/:pbfId', async (req, res) => {
 });
 
 // GET /api/matching/menunggu-verifikasi
-router.get('/menunggu-verifikasi', async (_req, res) => {
+router.get('/menunggu-verifikasi', requireMenuAksi('matching', 'lihat'), async (_req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('matching')
-      .select(SELECT_MATCHING)
-      .eq('status', 'menunggu_verifikasi')
-      .order('tanggal_dipilih', { ascending: true });
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from('matching')
+        .select(SELECT_MATCHING)
+        .eq('status', 'menunggu_verifikasi')
+        .order('tanggal_dipilih', { ascending: true })
+    );
 
-    if (error) throw error;
+    // Enrich pricelist fields in bulk (hindari N+1 per baris).
+    const byPbf = new Map();
+    for (const row of rows) {
+      if (!row.pricelist_pbf_id || !row.pricelist_kode_pbf) continue;
+      if (!byPbf.has(row.pricelist_pbf_id)) {
+        byPbf.set(row.pricelist_pbf_id, new Set());
+      }
+      byPbf.get(row.pricelist_pbf_id).add(row.pricelist_kode_pbf);
+    }
 
-    const rows = data || [];
-    const enriched = await Promise.all(
-      rows.map(async (row) => {
-        const { data: pl } = await supabase
-          .from('pricelist')
-          .select('nama_barang, harga_dasar, satuan, catatan_kondisi')
-          .eq('pbf_id', row.pricelist_pbf_id)
-          .eq('kode_pbf', row.pricelist_kode_pbf)
-          .order('tanggal_upload', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        return {
-          ...row,
-          pricelist_nama_barang: pl?.nama_barang || null,
-          pricelist_harga_dasar: pl?.harga_dasar ?? null,
-          pricelist_satuan: pl?.satuan || null,
-          pricelist_catatan_kondisi: pl?.catatan_kondisi || null,
-        };
+    const plMap = new Map();
+    await Promise.all(
+      [...byPbf.entries()].map(async ([pbfId, kodeSet]) => {
+        const plRows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select('kode_pbf, nama_barang, harga_dasar, satuan, catatan_kondisi, tanggal_upload, id')
+            .eq('pbf_id', pbfId)
+            .order('tanggal_upload', { ascending: false })
+            .order('id', { ascending: false })
+        );
+        const seen = new Set();
+        for (const pl of plRows) {
+          if (!kodeSet.has(pl.kode_pbf) || seen.has(pl.kode_pbf)) continue;
+          seen.add(pl.kode_pbf);
+          plMap.set(`${pbfId}::${pl.kode_pbf}`, pl);
+        }
       })
     );
+
+    const enriched = rows.map((row) => {
+      const pl = plMap.get(`${row.pricelist_pbf_id}::${row.pricelist_kode_pbf}`);
+      return {
+        ...row,
+        pricelist_nama_barang: pl?.nama_barang || null,
+        pricelist_harga_dasar: pl?.harga_dasar ?? null,
+        pricelist_satuan: pl?.satuan || null,
+        pricelist_catatan_kondisi: pl?.catatan_kondisi || null,
+      };
+    });
 
     return res.json(enriched);
   } catch (err) {
@@ -465,7 +483,7 @@ router.get('/menunggu-verifikasi', async (_req, res) => {
 });
 
 // GET /api/matching/unmatched
-router.get('/unmatched', async (req, res) => {
+router.get('/unmatched', requireMenuAksi('matching', 'lihat'), async (req, res) => {
   try {
     const pbfFilter = normalizeText(req.query.pbf_id);
 
@@ -532,8 +550,57 @@ router.get('/unmatched', async (req, res) => {
   }
 });
 
+// GET /api/matching/supplier-map-aktif
+// Map kode_obat_yelo -> [{ id, nama, inisial }] dari matching aktif.
+router.get('/supplier-map-aktif', requireMenuAksi('matching', 'lihat'), async (_req, res) => {
+  try {
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from('matching')
+        .select(
+          'id, kode_obat_yelo, pricelist_kode_pbf, status, supplier:supplier ( id, nama, inisial )'
+        )
+        .in('status', HIDDEN_FROM_KANDIDAT)
+        .not('kode_obat_yelo', 'is', null)
+    );
+
+    /** @type {Record<string, Array<{ id: string, nama: string | null, inisial: string | null, pricelist_kode_pbf: string | null, matching_id: string }>>} */
+    const map = {};
+    for (const row of rows) {
+      const kode = row.kode_obat_yelo;
+      const supplier = row.supplier;
+      if (!kode || !supplier?.id) continue;
+      if (!map[kode]) map[kode] = [];
+      // Satu pill per supplier; simpan kode_pbf pertama yang aktif
+      const existing = map[kode].find((s) => s.id === supplier.id);
+      if (existing) continue;
+      map[kode].push({
+        id: supplier.id,
+        nama: supplier.nama || null,
+        inisial: supplier.inisial || null,
+        pricelist_kode_pbf: row.pricelist_kode_pbf || null,
+        matching_id: row.id,
+      });
+    }
+
+    for (const kode of Object.keys(map)) {
+      map[kode].sort((a, b) =>
+        String(a.inisial || a.nama || '').localeCompare(
+          String(b.inisial || b.nama || ''),
+          'id'
+        )
+      );
+    }
+
+    return res.json(map);
+  } catch (err) {
+    console.error('[GET /matching/supplier-map-aktif]', err);
+    return res.status(500).json({ error: 'Gagal mengambil peta supplier matching' });
+  }
+});
+
 // GET /api/matching/obat/:kodeObatYelo
-router.get('/obat/:kodeObatYelo', async (req, res) => {
+router.get('/obat/:kodeObatYelo', requireMenuAksi('matching', 'lihat'), async (req, res) => {
   try {
     const kode = decodeURIComponent(req.params.kodeObatYelo);
     const { data, error } = await supabase
@@ -550,8 +617,177 @@ router.get('/obat/:kodeObatYelo', async (req, res) => {
   }
 });
 
+/**
+ * PUT /api/matching/obat/:kodeObatYelo/suppliers
+ * Owner-only: sync supplier matching (bypass usul/verifikasi).
+ * - add: insert matching status=terverifikasi
+ * - remove_pbf_ids: set matching aktif → ditolak (riwayat tetap)
+ */
+router.put(
+  '/obat/:kodeObatYelo/suppliers',
+  requireOwner,
+  async (req, res) => {
+  try {
+    const kodeObat = decodeURIComponent(req.params.kodeObatYelo);
+    const actor = actorFromReq(req);
+    const addList = Array.isArray(req.body?.add) ? req.body.add : [];
+    const removeIds = Array.isArray(req.body?.remove_pbf_ids)
+      ? req.body.remove_pbf_ids
+      : [];
+
+    const { data: obat, error: obatError } = await supabase
+      .from('obat_yelo')
+      .select('kode_obat')
+      .eq('kode_obat', kodeObat)
+      .maybeSingle();
+    if (obatError) throw obatError;
+    if (!obat) {
+      return res.status(404).json({ error: 'Obat Yelo tidak ditemukan' });
+    }
+
+    const now = new Date().toISOString();
+    const results = { added: [], rejected: [], skipped: [] };
+
+    for (const pbfIdRaw of removeIds) {
+      const pbfId = normalizeText(pbfIdRaw);
+      if (!pbfId) continue;
+
+      const { data: activeRows, error: findErr } = await supabase
+        .from('matching')
+        .select('id, status')
+        .eq('kode_obat_yelo', kodeObat)
+        .eq('pricelist_pbf_id', pbfId)
+        .in('status', HIDDEN_FROM_KANDIDAT);
+
+      if (findErr) throw findErr;
+
+      for (const row of activeRows || []) {
+        const { error: updErr } = await supabase
+          .from('matching')
+          .update({
+            status: 'ditolak',
+            diverifikasi_oleh: actor,
+            tanggal_diverifikasi: now,
+          })
+          .eq('id', row.id);
+        if (updErr) throw updErr;
+        results.rejected.push({ id: row.id, pricelist_pbf_id: pbfId });
+      }
+    }
+
+    for (const item of addList) {
+      const pbfId = normalizeText(item?.pricelist_pbf_id);
+      const kodePbf = normalizeText(item?.pricelist_kode_pbf);
+      if (!pbfId || !kodePbf) {
+        results.skipped.push({
+          reason: 'pricelist_pbf_id dan pricelist_kode_pbf wajib',
+          item,
+        });
+        continue;
+      }
+
+      const { data: existingActive, error: existErr } = await supabase
+        .from('matching')
+        .select('id, status')
+        .eq('kode_obat_yelo', kodeObat)
+        .eq('pricelist_pbf_id', pbfId)
+        .eq('pricelist_kode_pbf', kodePbf)
+        .in('status', HIDDEN_FROM_KANDIDAT)
+        .maybeSingle();
+      if (existErr) throw existErr;
+
+      if (existingActive) {
+        results.skipped.push({
+          reason: `Sudah aktif (${existingActive.status})`,
+          pricelist_pbf_id: pbfId,
+          pricelist_kode_pbf: kodePbf,
+        });
+        continue;
+      }
+
+      const { data: pl, error: plErr } = await supabase
+        .from('pricelist')
+        .select('kode_pbf')
+        .eq('pbf_id', pbfId)
+        .eq('kode_pbf', kodePbf)
+        .limit(1)
+        .maybeSingle();
+      if (plErr) throw plErr;
+      if (!pl) {
+        results.skipped.push({
+          reason: 'Item pricelist tidak ditemukan untuk supplier ini',
+          pricelist_pbf_id: pbfId,
+          pricelist_kode_pbf: kodePbf,
+        });
+        continue;
+      }
+
+      const { data: created, error: insErr } = await supabase
+        .from('matching')
+        .insert({
+          kode_obat_yelo: kodeObat,
+          pricelist_pbf_id: pbfId,
+          pricelist_kode_pbf: kodePbf,
+          status: 'terverifikasi',
+          diusulkan_oleh: actor,
+          tanggal_diusulkan: now,
+          dipilih_oleh: actor,
+          tanggal_dipilih: now,
+          diverifikasi_oleh: actor,
+          tanggal_diverifikasi: now,
+        })
+        .select('id, pricelist_pbf_id, pricelist_kode_pbf, status')
+        .single();
+
+      if (insErr) throw insErr;
+      results.added.push(created);
+    }
+
+    // Refresh map slice for this obat
+    const { data: activeAfter, error: afterErr } = await supabase
+      .from('matching')
+      .select(
+        'id, pricelist_pbf_id, pricelist_kode_pbf, status, supplier:supplier ( id, nama, inisial )'
+      )
+      .eq('kode_obat_yelo', kodeObat)
+      .in('status', HIDDEN_FROM_KANDIDAT);
+
+    if (afterErr) throw afterErr;
+
+    const suppliers = [];
+    for (const row of activeAfter || []) {
+      if (!row.supplier?.id) continue;
+      if (suppliers.some((s) => s.id === row.supplier.id)) continue;
+      suppliers.push({
+        id: row.supplier.id,
+        nama: row.supplier.nama || null,
+        inisial: row.supplier.inisial || null,
+        pricelist_kode_pbf: row.pricelist_kode_pbf || null,
+        matching_id: row.id,
+      });
+    }
+    suppliers.sort((a, b) =>
+      String(a.inisial || a.nama || '').localeCompare(
+        String(b.inisial || b.nama || ''),
+        'id'
+      )
+    );
+
+    return res.json({
+      kode_obat_yelo: kodeObat,
+      suppliers,
+      results,
+    });
+  } catch (err) {
+    console.error('[PUT /matching/obat/:kode/suppliers]', err);
+    return res.status(500).json({
+      error: err.message || 'Gagal menyimpan supplier matching',
+    });
+  }
+});
+
 // POST /api/matching/tidak-cocok — staf tandai "Tidak Ada yang Cocok" (permanen)
-router.post('/tidak-cocok', async (req, res) => {
+router.post('/tidak-cocok', requireMenuAksi('matching', 'usulkan'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.body?.pricelist_pbf_id);
     const kodePbf = normalizeText(req.body?.pricelist_kode_pbf);
@@ -618,7 +854,7 @@ router.post('/tidak-cocok', async (req, res) => {
 });
 
 // POST /api/matching
-router.post('/', async (req, res) => {
+router.post('/', requireMenuAksi('matching', 'usulkan'), async (req, res) => {
   try {
     const kodeObat = normalizeText(req.body?.kode_obat_yelo);
     const pbfId = normalizeText(req.body?.pricelist_pbf_id);
@@ -682,16 +918,11 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/matching/:id/verifikasi
-router.put('/:id/verifikasi', async (req, res) => {
+router.put(
+  '/:id/verifikasi',
+  requireMenuAksi('matching', 'verifikasi'),
+  async (req, res) => {
   try {
-    // TODO: batasi akses ke owner/is_owner setelah sistem akses (Group) dibangun.
-    // MATCHING_OPEN_VERIFY default true — tetap terbuka untuk sekarang.
-    if (!canVerifyMatching(req)) {
-      return res.status(403).json({
-        error: 'Hanya owner yang dapat memverifikasi matching',
-      });
-    }
-
     const { id } = req.params;
     const keputusan = normalizeText(req.body?.keputusan)?.toLowerCase();
     if (keputusan !== 'setuju' && keputusan !== 'tolak') {
@@ -738,7 +969,7 @@ router.put('/:id/verifikasi', async (req, res) => {
 });
 
 // PUT /api/matching/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireMenuAksi('matching', 'edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: existing, error: findError } = await supabase
@@ -752,8 +983,7 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Matching tidak ditemukan' });
     }
 
-    // TODO: batasi edit matching terverifikasi ke owner setelah sistem akses dibangun
-    if (existing.status === 'terverifikasi' && !canVerifyMatching(req)) {
+    if (existing.status === 'terverifikasi' && req.user?.is_owner !== true) {
       return res.status(403).json({
         error:
           'Matching sudah terverifikasi dan terkunci, hanya owner yang bisa ubah',

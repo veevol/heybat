@@ -1,7 +1,14 @@
 const express = require('express');
 const { supabase } = require('../db');
+const {
+  requireAuth,
+  requireApproved,
+  requireMenuAksi,
+} = require('../middleware/auth');
 
 const router = express.Router();
+
+router.use(requireAuth, requireApproved);
 
 const REF_TABLES = {
   kandungan: 'ref_kandungan',
@@ -29,7 +36,7 @@ function isUniqueViolation(error) {
 }
 
 // GET /api/ref/:jenis
-router.get('/:jenis', async (req, res) => {
+router.get('/:jenis', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => {
   try {
     const table = resolveTable(req.params.jenis);
     if (!table) {
@@ -55,7 +62,7 @@ router.get('/:jenis', async (req, res) => {
 });
 
 // POST /api/ref/:jenis
-router.post('/:jenis', async (req, res) => {
+router.post('/:jenis', requireMenuAksi('data-obat-yelo', 'tambah'), async (req, res) => {
   try {
     const table = resolveTable(req.params.jenis);
     if (!table) {

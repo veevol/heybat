@@ -16,8 +16,15 @@ const {
   updateUploadSession,
   consumeUploadSession,
 } = require('../lib/uploadSessions');
+const {
+  requireAuth,
+  requireApproved,
+  requireMenuAksi,
+} = require('../middleware/auth');
 
 const router = express.Router();
+router.use(requireAuth, requireApproved);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
@@ -288,7 +295,7 @@ async function persistPricelistInserts({ pbfId, supplier, items, diuploadOleh })
 }
 
 // GET /api/pricelist?pbf_id=
-router.get('/', async (req, res) => {
+router.get('/', requireMenuAksi('pricelist-pbf', 'lihat'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.query.pbf_id);
     if (!pbfId) {
@@ -307,7 +314,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/pricelist/preview — headers only (untuk form mapping)
-router.post('/preview', upload.single('file'), async (req, res) => {
+router.post('/preview', requireMenuAksi('pricelist-pbf', 'tambah'), upload.single('file'), async (req, res) => {
   try {
     if (!req.file?.buffer) {
       return res.status(400).json({ error: 'File Excel wajib diupload' });
@@ -335,7 +342,7 @@ router.post('/preview', upload.single('file'), async (req, res) => {
 });
 
 // POST /api/pricelist/parse-preview — tahap 1: parse + session, NO DB write
-router.post('/parse-preview', upload.single('file'), async (req, res) => {
+router.post('/parse-preview', requireMenuAksi('pricelist-pbf', 'tambah'), upload.single('file'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.body?.pbf_id);
     if (!pbfId) {
@@ -417,7 +424,7 @@ router.post('/parse-preview', upload.single('file'), async (req, res) => {
 });
 
 // PATCH /api/pricelist/session-scale — simpan pilihan toggle ×1000 ke sesi preview
-router.patch('/session-scale', async (req, res) => {
+router.patch('/session-scale', requireMenuAksi('pricelist-pbf', 'edit'), async (req, res) => {
   try {
     const sessionId = normalizeText(req.body?.session_id);
     if (!sessionId) {
@@ -443,7 +450,7 @@ router.patch('/session-scale', async (req, res) => {
 });
 
 // POST /api/pricelist/parse-pdf-preview — native PDF extract + preview/mapping
-router.post('/parse-pdf-preview', upload.single('file'), async (req, res) => {
+router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), upload.single('file'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.body?.pbf_id);
     if (!pbfId) {
@@ -558,7 +565,7 @@ router.post('/parse-pdf-preview', upload.single('file'), async (req, res) => {
 });
 
 // POST /api/pricelist/save-pdf-mapping — simpan template PDF + parse ulang → preview session
-router.post('/save-pdf-mapping', async (req, res) => {
+router.post('/save-pdf-mapping', requireMenuAksi('pricelist-pbf', 'edit'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.body?.pbf_id);
     const sessionId = normalizeText(req.body?.session_id);
@@ -639,7 +646,7 @@ router.post('/save-pdf-mapping', async (req, res) => {
 });
 
 // POST /api/pricelist/confirm — tahap 2: simpan template + insert riwayat
-router.post('/confirm', async (req, res) => {
+router.post('/confirm', requireMenuAksi('pricelist-pbf', 'tambah'), async (req, res) => {
   try {
     const sessionId = normalizeText(req.body?.session_id);
     if (!sessionId) {

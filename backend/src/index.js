@@ -8,6 +8,10 @@ const pricelistRouter = require('./routes/pricelist');
 const obatYeloRouter = require('./routes/obatYelo');
 const refDataRouter = require('./routes/refData');
 const matchingRouter = require('./routes/matching');
+const penjualanRouter = require('./routes/penjualan');
+const stokRouter = require('./routes/stok');
+const meRouter = require('./routes/me');
+const kelolaAksesRouter = require('./routes/kelolaAkses');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -58,12 +62,16 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'heybat-api' });
 });
 
+app.use('/api/me', meRouter);
+app.use('/api/kelola-akses', kelolaAksesRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/pricelist-template', pricelistTemplateRouter);
 app.use('/api/pricelist', pricelistRouter);
 app.use('/api/obat-yelo', obatYeloRouter);
 app.use('/api/ref', refDataRouter);
 app.use('/api/matching', matchingRouter);
+app.use('/api/penjualan', penjualanRouter);
+app.use('/api/stok', stokRouter);
 
 app.use((err, _req, res, _next) => {
   console.error('[unhandled]', err);
