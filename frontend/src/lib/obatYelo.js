@@ -117,6 +117,38 @@ export function compareKodeObat(a, b, direction = 'asc') {
   return direction === 'asc' ? cmp : -cmp;
 }
 
+export function formatNumberId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 }).format(num);
+}
+
+export function formatRupiahId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `Rp ${new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(num)}`;
+}
+
+/**
+ * Ringkasan singkat untuk kartu list, mis. "124 Tab · Rp 6.666".
+ * Null kalau kode_obat belum punya data stok sama sekali di snapshot terkini.
+ */
+export function formatStokRingkasSingkat(stokRingkasan) {
+  if (
+    !stokRingkasan ||
+    stokRingkasan.stok_total === null ||
+    stokRingkasan.stok_total === undefined
+  ) {
+    return null;
+  }
+  const qty = formatNumberId(stokRingkasan.stok_total) ?? '0';
+  const satuan = stokRingkasan.satuan ? ` ${stokRingkasan.satuan}` : '';
+  const harga = formatRupiahId(stokRingkasan.harga_1);
+  return harga ? `${qty}${satuan} · ${harga}` : `${qty}${satuan}`;
+}
+
 /** Format gabungan konversi + satuan: "2 Stp/Box". */
 export function formatSatuanGabung(obat) {
   if (!obat) return null;

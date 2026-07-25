@@ -1,4 +1,4 @@
-import { golonganBadgeClass } from '../lib/obatYelo';
+import { formatStokRingkasSingkat, golonganBadgeClass } from '../lib/obatYelo';
 
 /**
  * @param {{
@@ -13,6 +13,7 @@ export default function ObatYeloCard({ obat, suppliers = [], onOpen }) {
   const pills = (suppliers || [])
     .map((s) => s.inisial || s.nama)
     .filter(Boolean);
+  const stokLabel = formatStokRingkasSingkat(obat.stok_ringkasan);
 
   return (
     <article className="rounded-[4px] border border-border-subtle bg-bg-surface shadow-sm shadow-black/10 transition hover:bg-bg-surface-hover">
@@ -31,11 +32,17 @@ export default function ObatYeloCard({ obat, suppliers = [], onOpen }) {
           </span>
         </div>
 
-        {/* Section 2 — stok/harga placeholder + golongan */}
+        {/* Section 2 — stok/harga + golongan */}
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-[11px] leading-snug text-text-muted">
-            Stok & Harga
-          </span>
+          {stokLabel ? (
+            <span className="min-w-0 truncate text-[11px] font-medium leading-snug text-text-secondary">
+              {stokLabel}
+            </span>
+          ) : (
+            <span className="min-w-0 truncate text-[11px] leading-snug text-text-muted">
+              Stok & Harga: belum ada data
+            </span>
+          )}
           {golonganNama ? (
             <span
               className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none ${golonganBadgeClass(golonganNama)}`}
