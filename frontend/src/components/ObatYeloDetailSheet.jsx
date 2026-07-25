@@ -1,8 +1,14 @@
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronDown, Flag } from 'lucide-react';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
-import { formatSatuanGabung, golonganBadgeClass } from '../lib/obatYelo';
+import {
+  formatNumberId,
+  formatRupiahId,
+  formatSatuanGabung,
+  golonganBadgeClass,
+} from '../lib/obatYelo';
 
 function Row({ label, children }) {
   return (
@@ -16,6 +22,74 @@ function Row({ label, children }) {
 function formatNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   return String(value);
+}
+
+/** Section "Stok & Harga" pada detail: total gabungan, breakdown per gudang, 3 harga, badge tindak lanjut. */
+function StokHargaSection({ stokRingkasan, kodeObat }) {
+  const navigate = useNavigate();
+  const belumAdaData =
+    !stokRingkasan ||
+    stokRingkasan.stok_total === null ||
+    stokRingkasan.stok_total === undefined;
+
+  return (
+    <section className="rounded-[4px] border border-border-subtle bg-bg-base px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium text-text-muted">Stok & Harga</p>
+        {stokRingkasan?.ada_penandaan_terbuka ? (
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                `/stok?tab=tindak&kode_obat=${encodeURIComponent(kodeObat)}`
+              )
+            }
+            className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-state-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-state-warning hover:bg-state-warning/25"
+          >
+            <Flag className="h-3 w-3" />
+            Ada tindak lanjut
+          </button>
+        ) : null}
+      </div>
+
+      {belumAdaData ? (
+        <p className="mt-1 text-[13px] text-text-muted">Belum ada data</p>
+      ) : (
+        <>
+          <p className="mt-1 text-[16px] font-semibold leading-none text-text-primary">
+            {formatNumberId(stokRingkasan.stok_total)}
+            {stokRingkasan.satuan ? (
+              <span className="ml-1 text-[12px] font-normal text-text-muted">
+                {stokRingkasan.satuan}
+              </span>
+            ) : null}
+          </p>
+
+          {(stokRingkasan.gudang_list || []).length > 1 ? (
+            <ul className="mt-1.5 space-y-0.5 text-[11px] text-text-secondary">
+              {stokRingkasan.gudang_list.map((g) => (
+                <li key={g.gudang} className="flex justify-between gap-2">
+                  <span>{g.gudang}</span>
+                  <span className="font-medium text-text-primary">
+                    {formatNumberId(g.stok_total)}
+                    {g.satuan ? ` ${g.satuan}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-text-secondary">
+            <span>H1 (Retail): {formatRupiahId(stokRingkasan.harga_1) || '—'}</span>
+            <span>H2 (Kontrol Margin): {formatRupiahId(stokRingkasan.harga_2) || '—'}</span>
+            <span>
+              H3 (Grosir Mitra/Karyawan): {formatRupiahId(stokRingkasan.harga_3) || '—'}
+            </span>
+          </div>
+        </>
+      )}
+    </section>
+  );
 }
 
 export function ObatModalTitle({ nama, kode }) {
@@ -81,10 +155,12 @@ export default function ObatYeloDetailSheet({
       }
     >
       <div className="space-y-3">
+        <StokHargaSection
+          stokRingkasan={obat.stok_ringkasan}
+          kodeObat={obat.kode_obat}
+        />
+
         <dl className="space-y-1.5">
-          <Row label="Stok & Harga">
-            <span className="text-text-muted">Belum tersedia</span>
-          </Row>
           <Row label="Min Jual">{formatNumber(obat.min_jual)}</Row>
           <Row label="Satuan">{satuanGabung}</Row>
           <Row label="Kandungan">{obat.kandungan?.nama}</Row>
