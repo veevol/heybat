@@ -5,19 +5,12 @@ import SheetModal from '../SheetModal';
 import { useAuth } from '../../context/AuthContext';
 import { canSeeMenu } from '../../lib/permissions';
 import NavCircleLoader from './NavCircleLoader';
-import {
-  NAV_PILL_VISIBLE_SLOTS,
-  PRIMARY_NAV_ITEMS,
-  resolvePageAction,
-} from './navConfig';
+import { PRIMARY_NAV_ITEMS, resolvePageAction } from './navConfig';
 
-/** Collapsed control */
-const CIRCLE = 'h-14 w-14';
-/**
- * Fixed outer width for expanded pill (~5 nav slots + optional action).
- * Inner nav track scrolls if PRIMARY_NAV_ITEMS grows past NAV_PILL_VISIBLE_SLOTS.
- */
-const PILL = 'h-14 w-[min(calc(100vw-2rem),20.5rem)]';
+/** Collapsed control (bottom-right) */
+const COLLAPSED = 'h-14 w-14';
+/** Expanded panel width — stays on the right, grows upward */
+const EXPANDED = 'w-14';
 
 export default function BottomNav({ pageAction = null, navLoading = false }) {
   const location = useLocation();
@@ -92,16 +85,16 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
         aria-label="Navigasi utama"
       >
         {/*
-          Anchor box spans full width so the control can animate
-          from bottom-right (collapsed) to horizontal center (expanded).
+          Anchor box: control stays bottom-right when collapsed,
+          and grows upward on the right when expanded.
         */}
         <div className="relative mx-auto h-14 w-full max-w-lg">
           <div
             className={[
-              'pointer-events-auto absolute bottom-0 flex items-center overflow-hidden transition-all duration-300 ease-out',
+              'pointer-events-auto absolute right-0 bottom-0 flex overflow-hidden transition-all duration-300 ease-out',
               expanded
-                ? `${PILL} left-1/2 -translate-x-1/2 gap-0.5 rounded-full border border-border-subtle/80 bg-bg-surface/95 py-1 pl-1.5 pr-1.5 shadow-lg shadow-black/45 backdrop-blur-md`
-                : `${CIRCLE} right-0 translate-x-0 justify-center rounded-[4px] ${
+                ? `${EXPANDED} max-h-[min(70vh,28rem)] flex-col gap-0.5 rounded-[4px] border border-border-subtle/80 bg-bg-surface/95 p-1 shadow-lg shadow-black/45 backdrop-blur-md`
+                : `${COLLAPSED} items-center justify-center rounded-[4px] ${
                     circleBusy
                       ? 'bg-transparent shadow-none'
                       : 'bg-accent-yellow shadow-lg shadow-black/45 ring-1 ring-black/10'
@@ -115,19 +108,23 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
                 className="flex h-full w-full items-center justify-center text-bg-base"
                 aria-expanded={false}
                 aria-controls={labelId}
-                aria-label={navLoading ? 'Memuat data… Buka menu navigasi' : 'Buka menu navigasi'}
+                aria-label={
+                  navLoading
+                    ? 'Memuat data… Buka menu navigasi'
+                    : 'Buka menu navigasi'
+                }
                 aria-busy={navLoading || circleBusy}
               >
-                <NavCircleLoader isLoading={navLoading} onBusyChange={setCircleBusy} />
+                <NavCircleLoader
+                  isLoading={navLoading}
+                  onBusyChange={setCircleBusy}
+                />
               </button>
             ) : (
               <>
                 <div
                   id={labelId}
-                  className="flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto scrollbar-hide"
-                  style={{
-                    maxWidth: `calc(${NAV_PILL_VISIBLE_SLOTS} * 3.25rem)`,
-                  }}
+                  className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto scrollbar-hide"
                 >
                   {navItems.map((item) => {
                     const Icon = item.icon;
@@ -139,16 +136,19 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
                         type="button"
                         onClick={() => handleNavItem(item)}
                         className={[
-                          'relative flex min-w-[3.25rem] shrink-0 flex-col items-center justify-center gap-0.5 rounded-full px-2.5 py-1.5 transition',
+                          'relative flex w-full shrink-0 flex-col items-center justify-center gap-0.5 rounded-[4px] px-1 py-1.5 transition',
                           active
                             ? 'bg-accent-yellow/15 text-accent-yellow'
                             : 'text-text-muted hover:text-text-secondary',
                         ].join(' ')}
                         aria-current={active ? 'page' : undefined}
                       >
-                        <Icon className="h-4 w-4" strokeWidth={active ? 2.5 : 2} />
+                        <Icon
+                          className="h-4 w-4"
+                          strokeWidth={active ? 2.5 : 2}
+                        />
                         <span
-                          className={`text-[10px] leading-none ${
+                          className={`w-full truncate text-center text-[9px] leading-none ${
                             active ? 'font-semibold' : 'font-medium'
                           }`}
                         >
@@ -163,7 +163,7 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
                   <button
                     type="button"
                     onClick={handleActionClick}
-                    className="ml-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-navy text-white shadow-sm shadow-black/30 transition hover:brightness-110 active:scale-95"
+                    className="mt-0.5 flex h-11 w-full shrink-0 items-center justify-center rounded-[4px] bg-accent-navy text-white shadow-sm shadow-black/30 transition hover:brightness-110 active:scale-95"
                     aria-label={action.ariaLabel}
                     title={action.label}
                   >
@@ -209,7 +209,9 @@ export default function BottomNav({ pageAction = null, navLoading = false }) {
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-bg-base text-text-secondary">
                 <Settings className="h-4 w-4" />
               </span>
-              <span className="flex-1 text-[13px] text-text-primary">Pengaturan</span>
+              <span className="flex-1 text-[13px] text-text-primary">
+                Pengaturan
+              </span>
               <ChevronRight className="h-4 w-4 text-text-muted" />
             </button>
             <button

@@ -59,6 +59,7 @@ const EMPTY_REFS = {
 
 const EMPTY_SORT = { key: null, direction: 'asc' };
 const EMPTY_FILTERS = {
+  stok: ['Ready'],
   supplier: [],
   golongan: [],
   substitusi: [],
@@ -66,6 +67,11 @@ const EMPTY_FILTERS = {
   konversi: [],
   status_vmedis: [],
 };
+
+function hasStokData(obat) {
+  const s = obat?.stok_ringkasan;
+  return s != null && s.stok_total !== null && s.stok_total !== undefined;
+}
 
 function toPayload(form) {
   const numOrNull = (v) => {
@@ -279,6 +285,14 @@ export default function DataObatYeloPage() {
         if (!blob.includes(q)) return false;
       }
 
+      const fStok = filters.stok || [];
+      if (fStok.length > 0) {
+        const ready = hasStokData(obat);
+        const okReady = fStok.includes('Ready') && ready;
+        const okKosong = fStok.includes('Kosong') && !ready;
+        if (!okReady && !okKosong) return false;
+      }
+
       const fSupplier = filters.supplier || [];
       if (fSupplier.length > 0) {
         const pills = (supplierMap[obat.kode_obat] || [])
@@ -346,6 +360,7 @@ export default function DataObatYeloPage() {
     setDraftSearch(search);
     setDraftSort(sort);
     setDraftFilters({
+      stok: [...(filters.stok || [])],
       supplier: [...(filters.supplier || [])],
       golongan: [...(filters.golongan || [])],
       substitusi: [...(filters.substitusi || [])],
@@ -360,6 +375,7 @@ export default function DataObatYeloPage() {
     setSearch(draftSearch);
     setSort(draftSort);
     setFilters({
+      stok: [...(draftFilters.stok || [])],
       supplier: [...(draftFilters.supplier || [])],
       golongan: [...(draftFilters.golongan || [])],
       substitusi: [...(draftFilters.substitusi || [])],
@@ -844,6 +860,12 @@ export default function DataObatYeloPage() {
         sortState={draftSort}
         onSortChange={setDraftSort}
         filterGroups={[
+          {
+            key: 'stok',
+            label: 'Stok',
+            options: ['Ready', 'Kosong'],
+            preserveOrder: true,
+          },
           { key: 'supplier', label: 'Supplier', options: filterOptions.supplier },
           { key: 'golongan', label: 'Golongan', options: filterOptions.golongan, preserveOrder: true },
           {

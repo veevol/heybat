@@ -79,6 +79,7 @@ export default function FilterSortSearchSheet({
         </h2>
       }
       onClose={onClose}
+      borderless
       footer={
         <div className="flex gap-2">
           <button
@@ -109,7 +110,7 @@ export default function FilterSortSearchSheet({
             value={searchValue}
             onChange={(e) => onSearchChange?.(e.target.value)}
             placeholder={searchPlaceholder}
-            className="h-9 w-full rounded-[4px] border border-border-subtle bg-bg-base py-1.5 pl-8 pr-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow"
+            className="h-9 w-full rounded-[4px] bg-bg-base py-1.5 pl-8 pr-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:ring-1 focus:ring-accent-yellow"
             aria-label="Cari"
           />
         </div>
@@ -128,10 +129,10 @@ export default function FilterSortSearchSheet({
                     key={opt.key}
                     type="button"
                     onClick={() => toggleSort(opt.key)}
-                    className={`flex w-full items-center justify-between gap-2 rounded-[4px] border px-2.5 py-2 text-left text-[13px] ${
+                    className={`flex w-full items-center justify-between gap-2 rounded-[4px] px-2.5 py-2 text-left text-[13px] ${
                       active
-                        ? 'border-accent-yellow bg-accent-yellow/10 text-text-primary'
-                        : 'border-border-subtle text-text-secondary hover:bg-bg-surface-hover'
+                        ? 'bg-accent-yellow/10 text-text-primary'
+                        : 'bg-bg-base text-text-secondary hover:bg-bg-surface-hover'
                     }`}
                   >
                     <span className="font-medium">{opt.label}</span>
@@ -173,12 +174,12 @@ export default function FilterSortSearchSheet({
               return (
                 <div
                   key={group.key}
-                  className="overflow-hidden rounded-[4px] border border-border-subtle"
+                  className="overflow-hidden rounded-[4px] bg-bg-base"
                 >
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
-                    className="flex w-full items-center justify-between gap-2 bg-bg-base px-2.5 py-2 text-left hover:bg-bg-surface-hover"
+                    className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-bg-surface-hover"
                   >
                     <span className="text-[13px] font-medium text-text-primary">
                       {group.label}
@@ -195,7 +196,7 @@ export default function FilterSortSearchSheet({
                     />
                   </button>
                   {isOpen ? (
-                    <ul className="max-h-44 space-y-0.5 overflow-y-auto border-t border-border-subtle bg-bg-surface px-2 py-1.5 scrollbar-hide">
+                    <ul className="max-h-44 space-y-0.5 overflow-y-auto px-2 py-1.5 scrollbar-hide">
                       {options.length === 0 ? (
                         <li className="px-1 py-1 text-[12px] text-text-muted">
                           Tidak ada opsi

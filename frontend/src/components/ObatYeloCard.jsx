@@ -16,15 +16,15 @@ export default function ObatYeloCard({ obat, suppliers = [], onOpen }) {
   const stokLabel = formatStokRingkasSingkat(obat.stok_ringkasan);
 
   return (
-    <article className="rounded-[4px] border border-border-subtle bg-bg-surface shadow-sm shadow-black/10 transition hover:bg-bg-surface-hover">
+    <article className="group overflow-hidden rounded-[4px] border border-bg-surface bg-bg-surface shadow-sm shadow-black/10 transition hover:border-bg-surface-hover">
       <button
         type="button"
         onClick={() => onOpen(obat)}
-        className="w-full space-y-1.5 p-2.5 text-left"
+        className="w-full text-left"
       >
         {/* Section 1 — nama + kode */}
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <h3 className="min-w-0 flex-1 truncate text-[14px] font-bold leading-snug text-text-primary">
+        <div className="flex min-w-0 items-center justify-between gap-2 bg-bg-surface px-2.5 py-1.5 transition group-hover:bg-bg-surface-hover">
+          <h3 className="min-w-0 flex-1 truncate text-[14px] font-bold leading-none text-text-primary">
             {obat.nama_obat}
           </h3>
           <span className="shrink-0 rounded-[4px] bg-accent-yellow px-1.5 py-0.5 text-[10px] font-semibold leading-none text-bg-base">
@@ -32,51 +32,48 @@ export default function ObatYeloCard({ obat, suppliers = [], onOpen }) {
           </span>
         </div>
 
-        {/* Section 2 — stok/harga + golongan */}
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          {stokLabel ? (
-            <span className="min-w-0 truncate text-[11px] font-medium leading-snug text-text-secondary">
-              {stokLabel}
-            </span>
-          ) : (
-            <span className="min-w-0 truncate text-[11px] leading-snug text-text-muted">
-              Stok & Harga: belum ada data
-            </span>
-          )}
-          {golonganNama ? (
-            <span
-              className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none ${golonganBadgeClass(golonganNama)}`}
-            >
-              {golonganNama}
-            </span>
-          ) : (
-            <span className="shrink-0 text-[10px] text-text-muted">—</span>
-          )}
-        </div>
+        {/* Section 2 — stok/harga, golongan, substitusi, supplier */}
+        <div className="space-y-1.5 bg-[#2e2d34] px-2.5 py-1.5 transition group-hover:bg-[#35343c]">
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            {stokLabel ? (
+              <span className="min-w-0 truncate text-[11px] font-medium leading-snug text-text-secondary">
+                {stokLabel}
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1" />
+            )}
+            {golonganNama ? (
+              <span
+                className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none ${golonganBadgeClass(golonganNama)}`}
+              >
+                {golonganNama}
+              </span>
+            ) : (
+              <span className="shrink-0 text-[10px] text-text-muted">—</span>
+            )}
+          </div>
 
-        {/* Section 3 — substitusi + supplier pills */}
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          {substitusi ? (
-            <span className="min-w-0 flex-1 truncate text-[12px] leading-snug text-text-secondary">
-              {substitusi}
-            </span>
-          ) : (
-            <span className="min-w-0 flex-1" />
-          )}
-          {pills.length > 0 ? (
-            <div className="flex max-w-[55%] flex-wrap justify-end gap-1">
-              {pills.map((label) => (
-                <span
-                  key={label}
-                  className="shrink-0 rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span className="shrink-0 text-[10px] text-text-muted">—</span>
-          )}
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            {substitusi ? (
+              <span className="min-w-0 flex-1 truncate text-[12px] leading-snug text-text-secondary">
+                {substitusi}
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1" />
+            )}
+            {pills.length > 0 ? (
+              <div className="flex max-w-[55%] flex-wrap justify-end gap-1">
+                {pills.map((label) => (
+                  <span
+                    key={label}
+                    className="shrink-0 rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </button>
     </article>
