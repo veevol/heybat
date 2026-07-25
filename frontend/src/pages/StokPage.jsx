@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Flag, Plus, SlidersHorizontal, Trash2, Upload } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Archive, Flag, Plus, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import {
   confirmStokUpload,
   createStokPenandaan,
@@ -30,6 +31,7 @@ import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingMod
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 
+const VALID_STOK_TABS = ['stok', 'upload', 'tindak', 'riwayat'];
 const EMPTY_FILTERS = { gudang: [] };
 const EMPTY_SORT = { key: null, direction: 'asc' };
 const EMPTY_OBAT_FORM = {
@@ -126,7 +128,14 @@ export default function StokPage() {
   const canTambahObat = hasAccess('data-obat-yelo', 'tambah');
   const isOwner = profile?.is_owner === true;
 
-  const [tab, setTab] = useState('stok'); // stok | upload | riwayat | tindak
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get('tab');
+    return VALID_STOK_TABS.includes(t) ? t : 'stok';
+  }); // stok | upload | riwayat | tindak
+  const [kodeObatFilter, setKodeObatFilter] = useState(
+    () => searchParams.get('kode_obat') || ''
+  );
   const [batch, setBatch] = useState(null);
   const [items, setItems] = useState([]);
   const [gudangOptions, setGudangOptions] = useState([]);
@@ -622,6 +631,20 @@ export default function StokPage() {
     return list;
   }, [items, search, filters, sortState]);
 
+  const filteredPenandaanItems = useMemo(() => {
+    if (!kodeObatFilter) return penandaanItems;
+    return penandaanItems.filter((p) => p.kode_obat === kodeObatFilter);
+  }, [penandaanItems, kodeObatFilter]);
+
+  function clearKodeObatFilter() {
+    setKodeObatFilter('');
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('kode_obat');
+      return next;
+    });
+  }
+
   function openFilterSheet() {
     setDraftSearch(search);
     setDraftFilters({ gudang: [...(filters.gudang || [])] });
@@ -876,6 +899,22 @@ export default function StokPage() {
 
         {!loading && tab === 'tindak' ? (
           <div className="space-y-2">
+            {kodeObatFilter ? (
+              <div className="flex items-center gap-1.5 rounded-[4px] border border-accent-navy/40 bg-accent-navy/10 px-2 py-1 text-[11px] text-accent-navy">
+                <span className="min-w-0 flex-1 truncate">
+                  Difilter untuk kode obat: <strong>{kodeObatFilter}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={clearKodeObatFilter}
+                  className="shrink-0 rounded-[4px] p-0.5 hover:bg-accent-navy/20"
+                  aria-label="Hapus filter kode obat"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap gap-1">
               {PENANDAAN_FILTERS.map((f) => (
                 <button
@@ -893,18 +932,18 @@ export default function StokPage() {
               ))}
             </div>
 
-            {penandaanItems.length === 0 ? (
+            {filteredPenandaanItems.length === 0 ? (
               <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
                 Tidak ada stok yang perlu ditindaklanjuti
-                {penandaanFilter ? ` untuk filter ini` : ''}.
+                {penandaanFilter || kodeObatFilter ? ` untuk filter ini` : ''}.
               </div>
             ) : (
               <div className="space-y-1.5">
                 <p className="text-[11px] text-text-muted">
-                  {formatNumber(penandaanItems.length)} penandaan terbuka — otomatis dari
+                  {formatNumber(filteredPenandaanItems.length)} penandaan terbuka — otomatis dari
                   upload atau ditandai manual.
                 </p>
-                {penandaanItems.map((p) => {
+                {filteredPenandaanItems.map((p) => {
                   const s = p.stok || {};
                   const isTambah = p.jenis_tindakan === 'tambah_ke_obat_yelo';
                   const kode = p.kode_obat || s.kode_obat || '—';
