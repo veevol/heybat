@@ -143,6 +143,143 @@ async function fetchAllObatRows(buildQuery, pageSize = 1000) {
   return all;
 }
 
+/**
+ * Ringkasan stok per kode_obat dari snapshot upload_batch TERBARU saja
+ * (bukan gabungan seluruh riwayat). Digabung lintas gudang & no_batch untuk
+ * total, plus breakdown per gudang untuk detail card.
+ *
+ * 1-2 query saja (bukan N+1 per obat): 1x ambil batch terbaru, lalu 1x (atau
+ * beberapa halaman) ambil semua baris stok_obat pada batch itu.
+ */
+async function loadLatestStokRingkasanMap() {
+  const { data: latestBatch, error: batchErr } = await supabase
+    .from('stok_upload_batch')
+    .select('id')
+    .order('tanggal_upload', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (batchErr) throw batchErr;
+  if (!latestBatch) return new Map();
+
+  const rows = await fetchAllObatRows(() =>
+    supabase
+      .from('stok_obat')
+      .select('kode_obat, gudang, stok_qty, satuan, harga_1, harga_2, harga_3')
+      .eq('upload_batch_id', latestBatch.id)
+  );
+
+  const byKode = new Map();
+  for (const row of rows) {
+    const kode = row.kode_obat;
+    if (!kode) continue;
+    let slot = byKode.get(kode);
+    if (!slot) {
+      slot = {
+        stok_total: 0,
+        satuan: null,
+        harga_1: null,
+        harga_2: null,
+        harga_3: null,
+        gudangMap: new Map(),
+      };
+      byKode.set(kode, slot);
+    }
+    const qty = Number(row.stok_qty) || 0;
+    slot.stok_total += qty;
+    if (!slot.satuan && row.satuan) slot.satuan = row.satuan;
+    if (slot.harga_1 == null && row.harga_1 != null) slot.harga_1 = row.harga_1;
+    if (slot.harga_2 == null && row.harga_2 != null) slot.harga_2 = row.harga_2;
+    if (slot.harga_3 == null && row.harga_3 != null) slot.harga_3 = row.harga_3;
+
+    const gudang = row.gudang || 'Retail';
+    const g = slot.gudangMap.get(gudang) || {
+      gudang,
+      stok_total: 0,
+      satuan: row.satuan || null,
+    };
+    g.stok_total += qty;
+    if (!g.satuan && row.satuan) g.satuan = row.satuan;
+    slot.gudangMap.set(gudang, g);
+  }
+
+  const result = new Map();
+  for (const [kode, slot] of byKode) {
+    result.set(kode, {
+      stok_total: slot.stok_total,
+      satuan: slot.satuan,
+      harga_1: slot.harga_1,
+      harga_2: slot.harga_2,
+      harga_3: slot.harga_3,
+      gudang_list: [...slot.gudangMap.values()].sort((a, b) =>
+        String(a.gudang).localeCompare(String(b.gudang), 'id')
+      ),
+    });
+  }
+  return result;
+}
+
+/**
+ * Set kode_obat yang punya penandaan stok masih terbuka (status='terbuka'),
+ * baik yang tertaut langsung via kode_obat (mis. tambah_ke_obat_yelo) maupun
+ * via stok_obat_id (karantina/jual_prioritas/lainnya). Jumlah penandaan
+ * terbuka biasanya kecil, jadi ini tidak N+1 terhadap daftar obat_yelo.
+ */
+async function loadOpenPenandaanKodeSet() {
+  const result = new Set();
+
+  const kodeOnlyRows = await fetchAllObatRows(() =>
+    supabase
+      .from('stok_obat_penandaan')
+      .select('kode_obat')
+      .eq('status', 'terbuka')
+      .not('kode_obat', 'is', null)
+  );
+  for (const row of kodeOnlyRows) {
+    if (row.kode_obat) result.add(row.kode_obat);
+  }
+
+  const viaStokRows = await fetchAllObatRows(() =>
+    supabase
+      .from('stok_obat_penandaan')
+      .select('stok_obat_id')
+      .eq('status', 'terbuka')
+      .not('stok_obat_id', 'is', null)
+  );
+  const stokIds = [...new Set(viaStokRows.map((r) => r.stok_obat_id).filter(Boolean))];
+  const chunk = 200;
+  for (let i = 0; i < stokIds.length; i += chunk) {
+    const slice = stokIds.slice(i, i + chunk);
+    const { data, error } = await supabase
+      .from('stok_obat')
+      .select('id, kode_obat')
+      .in('id', slice);
+    if (error) throw error;
+    for (const row of data || []) {
+      if (row.kode_obat) result.add(row.kode_obat);
+    }
+  }
+
+  return result;
+}
+
+function attachStokRingkasan(rows, stokMap, openPenandaanKodeSet) {
+  return (rows || []).map((obat) => {
+    const stok = stokMap.get(obat.kode_obat) || null;
+    return {
+      ...obat,
+      stok_ringkasan: {
+        stok_total: stok ? stok.stok_total : null,
+        satuan: stok ? stok.satuan : null,
+        harga_1: stok ? stok.harga_1 : null,
+        harga_2: stok ? stok.harga_2 : null,
+        harga_3: stok ? stok.harga_3 : null,
+        gudang_list: stok ? stok.gudang_list : [],
+        ada_penandaan_terbuka: openPenandaanKodeSet.has(obat.kode_obat),
+      },
+    };
+  });
+}
+
 function buildPayload(body, { requireKode = false, allowAsalInput = false } = {}) {
   const nama_obat = normalizeText(body?.nama_obat);
   if (!nama_obat) {
@@ -223,11 +360,16 @@ router.get('/', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => 
         }
         return q;
       });
+      const [stokMap, openPenandaanKodeSet] = await Promise.all([
+        loadLatestStokRingkasanMap(),
+        loadOpenPenandaanKodeSet(),
+      ]);
+      const enriched = attachStokRingkasan(data, stokMap, openPenandaanKodeSet);
       return res.json({
-        data,
+        data: enriched,
         page: 1,
-        limit: data.length,
-        total: data.length,
+        limit: enriched.length,
+        total: enriched.length,
         totalPages: 1,
       });
     }
@@ -257,9 +399,15 @@ router.get('/', requireMenuAksi('data-obat-yelo', 'lihat'), async (req, res) => 
       return res.status(500).json({ error: 'Gagal mengambil data obat' });
     }
 
+    const [stokMap, openPenandaanKodeSet] = await Promise.all([
+      loadLatestStokRingkasanMap(),
+      loadOpenPenandaanKodeSet(),
+    ]);
+    const enrichedData = attachStokRingkasan(data ?? [], stokMap, openPenandaanKodeSet);
+
     const total = count ?? 0;
     return res.json({
-      data: data ?? [],
+      data: enrichedData,
       page,
       limit,
       total,
