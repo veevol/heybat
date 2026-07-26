@@ -33,21 +33,25 @@ export default function SearchableObatSelect({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return options.slice(0, 80);
-    return options
-      .filter((o) => {
-        const nama = String(o.nama_obat || '').toLowerCase();
-        const kode = String(o.kode_obat || '').toLowerCase();
-        const sat1 = String(o.satuan_1?.nama || '').toLowerCase();
-        const sat2 = String(o.satuan_2?.nama || '').toLowerCase();
-        return (
-          nama.includes(q) ||
-          kode.includes(q) ||
-          sat1.includes(q) ||
-          sat2.includes(q)
-        );
-      })
-      .slice(0, 80);
+    const byNama = (a, b) =>
+      String(a.nama_obat || '').localeCompare(String(b.nama_obat || ''), 'id', {
+        sensitivity: 'base',
+      });
+    const base = q
+      ? options.filter((o) => {
+          const nama = String(o.nama_obat || '').toLowerCase();
+          const kode = String(o.kode_obat || '').toLowerCase();
+          const sat1 = String(o.satuan_1?.nama || '').toLowerCase();
+          const sat2 = String(o.satuan_2?.nama || '').toLowerCase();
+          return (
+            nama.includes(q) ||
+            kode.includes(q) ||
+            sat1.includes(q) ||
+            sat2.includes(q)
+          );
+        })
+      : options;
+    return [...base].sort(byNama).slice(0, 80);
   }, [options, query]);
 
   useEffect(() => {

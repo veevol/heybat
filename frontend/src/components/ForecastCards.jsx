@@ -63,32 +63,47 @@ function uniqueGolongan(obatList) {
   return list;
 }
 
+function supplierPillLabel(s) {
+  return s?.inisial || s?.nama || '';
+}
+
+const pillBase =
+  'shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none';
+const pillNormal = `${pillBase} bg-bg-surface-hover text-white`;
+const pillActive = `${pillBase} bg-accent-yellow/20 text-accent-yellow`;
+
 /**
- * Card 1 obat forecast — pola Section 1/2 sama Card Data Obat Yelo.
+ * Card 1 obat forecast — Section 1/2/3.
  */
-export function ForecastObatCard({ obat, onOpenDetail, onOpenDefekta }) {
+export function ForecastObatCard({
+  obat,
+  suppliers = [],
+  activeSupplierId = null,
+  onOpenDetail,
+  onOpenDefekta,
+}) {
   const golonganNama = obat.golongan?.nama;
   const golonganLabel = golonganInisial(golonganNama);
   const stokProyeksi = `Stok ${formatQtyDenganSatuan(obat.stok_sekarang, obat)} · Proyeksi ${formatQtyDenganSatuan(obat.perkiraan_terjual, obat)}`;
   const kemasan = infoKemasanLabel(obat);
+  const pills = (suppliers || [])
+    .map((s) => ({
+      id: s.id,
+      label: supplierPillLabel(s),
+      active: Boolean(activeSupplierId && s.id === activeSupplierId),
+    }))
+    .filter((p) => p.label);
 
   return (
     <article className="overflow-hidden rounded-[4px] border border-bg-surface bg-bg-surface shadow-sm shadow-black/10">
-      {/* Section 1 — nama + kemasan + kode + golongan + more */}
+      {/* Section 1 — nama + kode + golongan + more */}
       <div className="flex min-w-0 items-center justify-between gap-2 bg-bg-surface px-2.5 py-1.5">
         <button
           type="button"
           onClick={() => onOpenDefekta?.(obat)}
-          className="flex min-w-0 flex-1 items-baseline gap-1.5 text-left"
+          className="min-w-0 flex-1 truncate text-left text-[13px] font-bold leading-none text-text-primary"
         >
-          <h3 className="min-w-0 shrink truncate text-[13px] font-bold leading-none text-text-primary">
-            {obat.nama_obat}
-          </h3>
-          {kemasan ? (
-            <span className="shrink-0 truncate text-[10px] leading-none text-text-secondary">
-              {kemasan}
-            </span>
-          ) : null}
+          {obat.nama_obat}
         </button>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -137,15 +152,38 @@ export function ForecastObatCard({ obat, onOpenDetail, onOpenDefekta }) {
           {formatKebutuhan(obat)}
         </span>
       </button>
+
+      {/* Section 3 — kemasan + pill supplier */}
+      <button
+        type="button"
+        onClick={() => onOpenDefekta?.(obat)}
+        className="flex min-h-[18px] w-full min-w-0 items-center justify-between gap-2 bg-[#2e2d34] px-2.5 pb-1.5 pt-0 text-left"
+      >
+        <span className="min-w-0 flex-1 truncate text-[10px] leading-none text-text-secondary">
+          {kemasan || '\u00a0'}
+        </span>
+        <div className="flex min-h-[18px] max-w-[65%] flex-wrap items-center justify-end gap-1">
+          {pills.map((p) => (
+            <span
+              key={p.id || p.label}
+              className={p.active ? pillActive : pillNormal}
+            >
+              {p.label}
+            </span>
+          ))}
+        </div>
+      </button>
     </article>
   );
 }
 
 /**
- * Card grup substitusi — collapsible, pola Section 1/2 sama Obat Yelo.
+ * Card grup substitusi — collapsible, Section 1/2/3.
  */
 export function ForecastGrupCard({
   grup,
+  suppliers = [],
+  activeSupplierId = null,
   expanded,
   onToggle,
   children,
@@ -158,6 +196,14 @@ export function ForecastGrupCard({
   const satuanCampur = Boolean(grup.satuan_campur);
   const satuanLabel = satuanCampur ? '' : grup.satuan_seragam || 'Tab';
   const withSatuan = (num) => (satuanLabel ? `${num} ${satuanLabel}` : num);
+  const pills = (suppliers || [])
+    .map((s) => ({
+      id: s.id,
+      label: supplierPillLabel(s),
+      active: Boolean(activeSupplierId && s.id === activeSupplierId),
+    }))
+    .filter((p) => p.label);
+  const leftHint = grup.recommended_grup_nama_obat || '\u00a0';
 
   return (
     <article className="overflow-hidden rounded-[4px] border border-bg-surface bg-bg-surface shadow-sm shadow-black/10">
@@ -213,6 +259,23 @@ export function ForecastGrupCard({
               />
             ) : null}
           </span>
+        </div>
+
+        {/* Section 3 — ringkas supplier unik + pill */}
+        <div className="flex min-h-[18px] min-w-0 items-center justify-between gap-2 bg-accent-yellow/5 px-2.5 pb-1.5 pt-0">
+          <span className="min-w-0 flex-1 truncate text-[10px] leading-none text-text-secondary">
+            {leftHint}
+          </span>
+          <div className="flex min-h-[18px] max-w-[65%] flex-wrap items-center justify-end gap-1">
+            {pills.map((p) => (
+              <span
+                key={p.id || p.label}
+                className={p.active ? pillActive : pillNormal}
+              >
+                {p.label}
+              </span>
+            ))}
+          </div>
         </div>
       </button>
 

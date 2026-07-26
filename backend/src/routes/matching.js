@@ -100,7 +100,7 @@ async function fetchAllObatYeloLight() {
       .select(
         'kode_obat, nama_obat, konversi, satuan_1:ref_satuan!obat_yelo_satuan_1_id_fkey ( id, nama ), satuan_2:ref_satuan!obat_yelo_satuan_2_id_fkey ( id, nama ), grup_substitusi:ref_grup_substitusi ( id, nama )'
       )
-      .order('nama_obat')
+      .order('nama_obat', { ascending: true })
   );
 }
 
@@ -355,15 +355,12 @@ router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req,
 
     const unmatched = latest.filter((row) => !hidden.has(row.kode_pbf));
 
-    // Prioritas: yang punya cache skor tinggi / exact name di cache, lalu abjad
-    unmatched.sort((a, b) => {
-      const ca = cacheInfo.map.get(a.kode_pbf);
-      const cb = cacheInfo.map.get(b.kode_pbf);
-      const sa = ca?.kandidat?.[0]?.skor_kemiripan || 0;
-      const sb = cb?.kandidat?.[0]?.skor_kemiripan || 0;
-      if (sa !== sb) return sb - sa;
-      return String(a.nama_barang || '').localeCompare(String(b.nama_barang || ''), 'id');
-    });
+    // Default A-Z nama barang PBF (skor kandidat tetap di dalam tiap card)
+    unmatched.sort((a, b) =>
+      String(a.nama_barang || '').localeCompare(String(b.nama_barang || ''), 'id', {
+        sensitivity: 'base',
+      })
+    );
 
     const pageRows = unmatched.slice(offset, offset + limit);
     let obatList = null;
@@ -511,10 +508,16 @@ router.get('/unmatched', requireMenuAksi('matching', 'lihat'), async (req, res) 
       supabase
         .from('obat_yelo')
         .select('kode_obat, nama_obat, golongan:ref_golongan(nama)')
-        .order('nama_obat')
+        .order('nama_obat', { ascending: true })
     );
 
-    const obatBelum = obatList.filter((o) => !matchedObat.has(o.kode_obat));
+    const obatBelum = obatList
+      .filter((o) => !matchedObat.has(o.kode_obat))
+      .sort((a, b) =>
+        String(a.nama_obat || '').localeCompare(String(b.nama_obat || ''), 'id', {
+          sensitivity: 'base',
+        })
+      );
 
     let pbfQuery = supabase.from('supplier').select('id, nama, inisial').order('nama');
     if (pbfFilter) pbfQuery = pbfQuery.eq('id', pbfFilter);
@@ -539,6 +542,12 @@ router.get('/unmatched', requireMenuAksi('matching', 'lihat'), async (req, res) 
         });
       }
     }
+
+    itemPbfBelum.sort((a, b) =>
+      String(a.nama_barang || '').localeCompare(String(b.nama_barang || ''), 'id', {
+        sensitivity: 'base',
+      })
+    );
 
     return res.json({
       obat_yelo_belum: obatBelum,

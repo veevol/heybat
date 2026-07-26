@@ -36,7 +36,7 @@ import { useAuth } from '../context/AuthContext';
 
 const VALID_STOK_TABS = ['stok', 'upload', 'tindak', 'riwayat'];
 const EMPTY_FILTERS = { gudang: emptyFilterSection() };
-const EMPTY_SORT = { key: null, direction: 'asc' };
+const EMPTY_SORT = { key: 'nama', direction: 'asc' };
 const EMPTY_OBAT_FORM = {
   kode_obat: '',
   nama_obat: '',
@@ -619,7 +619,8 @@ export default function StokPage() {
       list = [...list].sort((a, b) => {
         const cmp = String(a.nama_obat || a.kode_obat).localeCompare(
           String(b.nama_obat || b.kode_obat),
-          'id'
+          'id',
+          { sensitivity: 'base' }
         );
         return sortState.direction === 'desc' ? -cmp : cmp;
       });

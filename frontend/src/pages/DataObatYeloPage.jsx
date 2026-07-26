@@ -60,7 +60,7 @@ const EMPTY_REFS = {
   'grup-substitusi': [],
 };
 
-const EMPTY_SORT = { key: null, direction: 'asc' };
+const EMPTY_SORT = { key: 'nama', direction: 'asc' };
 const EMPTY_FILTERS = {
   stok: emptyFilterSection(['Ready']),
   supplier: emptyFilterSection(),
@@ -379,7 +379,8 @@ export default function DataObatYeloPage() {
       list = [...list].sort((a, b) => {
         const cmp = String(a.nama_obat || '').localeCompare(
           String(b.nama_obat || ''),
-          'id'
+          'id',
+          { sensitivity: 'base' }
         );
         return sort.direction === 'asc' ? cmp : -cmp;
       });

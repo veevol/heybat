@@ -425,7 +425,11 @@ export default function MatchingPage() {
       if (obat) {
         setKatalog((prev) => {
           if (prev.some((o) => o.kode_obat === obat.kode_obat)) return prev;
-          return [...prev, obat];
+          return [...prev, obat].sort((a, b) =>
+            String(a.nama_obat || '').localeCompare(String(b.nama_obat || ''), 'id', {
+              sensitivity: 'base',
+            })
+          );
         });
       }
 

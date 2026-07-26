@@ -311,7 +311,8 @@ router.get('/', requireMenuAksi('stok', 'lihat'), async (_req, res) => {
     const items = [...byKode.values()].sort((a, b) =>
       String(a.nama_obat || a.kode_obat).localeCompare(
         String(b.nama_obat || b.kode_obat),
-        'id'
+        'id',
+        { sensitivity: 'base' }
       )
     );
 
@@ -790,6 +791,14 @@ router.get('/penandaan', requireMenuAksi('stok', 'lihat'), async (req, res) => {
         otomatis: p.ditandai_oleh === AUTO_DITANDAI_OLEH,
       };
     });
+
+    items.sort((a, b) =>
+      String(a.nama_obat || a.kode_obat || '').localeCompare(
+        String(b.nama_obat || b.kode_obat || ''),
+        'id',
+        { sensitivity: 'base' }
+      )
+    );
 
     return res.json({ items, total: items.length });
   } catch (err) {

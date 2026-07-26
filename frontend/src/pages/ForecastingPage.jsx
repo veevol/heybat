@@ -10,14 +10,18 @@ import {
   resetDefektaPilihan,
   saveDefektaPilihan,
 } from '../api/forecast';
-import { getSupplierMapAktif } from '../api/matching';
+import { getSupplierMapAktif, syncObatSuppliers } from '../api/matching';
 import {
+  deleteObatYelo,
   getObatYelo,
   updateObatYelo,
   updateStatusVmedis,
 } from '../api/obatYelo';
+import { listLatestPricelist } from '../api/pricelist';
 import { listRef } from '../api/refData';
+import { listSuppliers } from '../api/suppliers';
 import AppShell from '../components/layout/AppShell';
+import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import DefektaSheet from '../components/DefektaSheet';
 import {
   ForecastGrupCard,
@@ -30,6 +34,7 @@ import FilterSortSearchSheet, {
 } from '../components/FilterSortSearchSheet';
 import ObatYeloDetailSheet from '../components/ObatYeloDetailSheet';
 import ObatYeloFormModal from '../components/ObatYeloFormModal';
+import PricelistPickSheet from '../components/PricelistPickSheet';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
@@ -116,10 +121,25 @@ function matchesStokFilter(kebutuhan, stokSelected) {
   return false;
 }
 
+function patchObatInHasil(prev, kodeObat, patch) {
+  if (!prev?.grup) return prev;
+  return {
+    ...prev,
+    grup: prev.grup.map((g) => ({
+      ...g,
+      obat: (g.obat || []).map((o) =>
+        o.kode_obat === kodeObat ? { ...o, ...patch } : o
+      ),
+    })),
+  };
+}
+
 export default function ForecastingPage() {
-  const { hasAccess } = useAuth();
+  const { profile, hasAccess } = useAuth();
+  const isOwner = profile?.is_owner === true;
   const canTambah = hasAccess('forecasting', 'tambah');
   const canEditObat = hasAccess('data-obat-yelo', 'edit');
+  const canHapusObat = hasAccess('data-obat-yelo', 'hapus');
   const [searchParams, setSearchParams] = useSearchParams();
 
   const runIdParam = searchParams.get('run');
@@ -160,11 +180,19 @@ export default function ForecastingPage() {
   const [detailObat, setDetailObat] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [vmedisBusy, setVmedisBusy] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState(EMPTY_FORM);
   const [editRefs, setEditRefs] = useState(EMPTY_REFS);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState('');
+  const [allSuppliers, setAllSuppliers] = useState([]);
+  const [editSuppliers, setEditSuppliers] = useState([]);
+  const [initialEditSupplierIds, setInitialEditSupplierIds] = useState([]);
+  const [pendingSupplier, setPendingSupplier] = useState(null);
+  const [pricelistItems, setPricelistItems] = useState([]);
+  const [pricelistLoading, setPricelistLoading] = useState(false);
 
   const [defektaObat, setDefektaObat] = useState(null);
   const [defektaLoading, setDefektaLoading] = useState(false);
@@ -489,6 +517,17 @@ export default function ForecastingPage() {
     setEditForm(obatToForm(obat));
     setEditError('');
     setEditOpen(true);
+
+    const current = (supplierMap[obat.kode_obat] || []).map((s) => ({
+      id: s.id,
+      nama: s.nama,
+      inisial: s.inisial,
+      pricelist_kode_pbf: s.pricelist_kode_pbf || null,
+      matching_id: s.matching_id || null,
+    }));
+    setEditSuppliers(current);
+    setInitialEditSupplierIds(current.map((s) => s.id));
+
     try {
       const [kandungan, golongan, satuan, grup] = await Promise.all([
         listRef('kandungan'),
@@ -505,6 +544,59 @@ export default function ForecastingPage() {
     } catch (err) {
       showToast(err.message || 'Gagal memuat referensi');
     }
+
+    if (isOwner) {
+      listSuppliers()
+        .then((list) => setAllSuppliers(list || []))
+        .catch((err) => showToast(err.message || 'Gagal memuat supplier'));
+    }
+  }
+
+  function closeEditForm() {
+    if (editSubmitting) return;
+    setEditOpen(false);
+    setEditError('');
+    setEditSuppliers([]);
+    setInitialEditSupplierIds([]);
+    setPendingSupplier(null);
+    setPricelistItems([]);
+  }
+
+  async function handleSupplierAdd(supplier) {
+    if (editSuppliers.some((s) => s.id === supplier.id)) return;
+    setPendingSupplier(supplier);
+    setPricelistLoading(true);
+    setPricelistItems([]);
+    try {
+      const list = await listLatestPricelist(supplier.id);
+      setPricelistItems(list || []);
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat pricelist');
+      setPendingSupplier(null);
+    } finally {
+      setPricelistLoading(false);
+    }
+  }
+
+  function handlePricelistPicked(row) {
+    if (!pendingSupplier) return;
+    setEditSuppliers((prev) => [
+      ...prev,
+      {
+        id: pendingSupplier.id,
+        nama: pendingSupplier.nama,
+        inisial: pendingSupplier.inisial,
+        pricelist_kode_pbf: row.kode_pbf,
+        matching_id: null,
+        _isNew: true,
+      },
+    ]);
+    setPendingSupplier(null);
+    setPricelistItems([]);
+  }
+
+  function handleSupplierRemove(supplierId) {
+    setEditSuppliers((prev) => prev.filter((s) => s.id !== supplierId));
   }
 
   async function handleEditSubmit(e) {
@@ -513,8 +605,41 @@ export default function ForecastingPage() {
     setEditError('');
     try {
       const payload = formToPayload(editForm);
-      const saved = await updateObatYelo(payload.kode_obat, payload);
+      const { kode_obat: kodeObat, ...rest } = payload;
+      const saved = await updateObatYelo(kodeObat, rest);
+
+      if (isOwner) {
+        const currentIds = new Set(editSuppliers.map((s) => s.id));
+        const initialIds = new Set(initialEditSupplierIds);
+        const removeSet = new Set(
+          [...initialIds].filter((id) => !currentIds.has(id))
+        );
+        for (const s of editSuppliers) {
+          if (s._isNew && initialIds.has(s.id)) removeSet.add(s.id);
+        }
+        const remove_pbf_ids = [...removeSet];
+        const add = editSuppliers
+          .filter((s) => s._isNew && s.pricelist_kode_pbf)
+          .map((s) => ({
+            pricelist_pbf_id: s.id,
+            pricelist_kode_pbf: s.pricelist_kode_pbf,
+          }));
+
+        if (add.length > 0 || remove_pbf_ids.length > 0) {
+          const syncResult = await syncObatSuppliers(kodeObat, {
+            add,
+            remove_pbf_ids,
+          });
+          setSupplierMap((prev) => ({
+            ...prev,
+            [kodeObat]: syncResult.suppliers || [],
+          }));
+        }
+      }
+
       setEditOpen(false);
+      setEditSuppliers([]);
+      setInitialEditSupplierIds([]);
       setDetailObat(saved);
       showToast('Obat disimpan');
       if (runIdParam) loadHasil(runIdParam);
@@ -535,6 +660,27 @@ export default function ForecastingPage() {
       showToast(err.message || 'Gagal update Vmedis');
     } finally {
       setVmedisBusy(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleting) return;
+    setDeleteSubmitting(true);
+    try {
+      await deleteObatYelo(deleting.kode_obat);
+      showToast('Obat berhasil dihapus');
+      setDeleting(null);
+      setDetailObat(null);
+      setSupplierMap((prev) => {
+        const next = { ...prev };
+        delete next[deleting.kode_obat];
+        return next;
+      });
+      if (runIdParam) loadHasil(runIdParam);
+    } catch (err) {
+      showToast(err.message || 'Gagal menghapus obat');
+    } finally {
+      setDeleteSubmitting(false);
     }
   }
 
@@ -573,6 +719,12 @@ export default function ForecastingPage() {
         pricelist_kode_pbf: row?.pricelist_kode_pbf || null,
       });
       setDefektaSelectedId(supplierId);
+      setHasil((prev) =>
+        patchObatInHasil(prev, defektaObat.kode_obat, {
+          active_supplier_id: supplierId,
+          pilihan_tersimpan: true,
+        })
+      );
       showToast('Pilihan PBF disimpan');
       setDefektaObat(null);
     } catch (err) {
@@ -587,13 +739,46 @@ export default function ForecastingPage() {
     setDefektaSaving(true);
     try {
       await resetDefektaPilihan(runIdParam, defektaObat.kode_obat);
-      setDefektaSelectedId(defektaRecommendedId);
+      const rec = defektaRecommendedId;
+      setDefektaSelectedId(rec);
+      const kebutuhan = Number(defektaObat.kebutuhan_beli) || 0;
+      setHasil((prev) =>
+        patchObatInHasil(prev, defektaObat.kode_obat, {
+          active_supplier_id: kebutuhan > 0 ? rec : null,
+          pilihan_tersimpan: false,
+          recommended_supplier_id:
+            defektaObat.recommended_supplier_id || rec || null,
+        })
+      );
       showToast('Kembali ke rekomendasi bobot tertinggi');
     } catch (err) {
       showToast(err.message || 'Gagal reset Defekta');
     } finally {
       setDefektaSaving(false);
     }
+  }
+
+  function suppliersForObat(kodeObat) {
+    return supplierMap[kodeObat] || [];
+  }
+
+  function uniqueSuppliersForGrup(grup) {
+    const seen = new Set();
+    const list = [];
+    for (const obat of grup.obat || []) {
+      for (const s of supplierMap[obat.kode_obat] || []) {
+        if (!s?.id || seen.has(s.id)) continue;
+        seen.add(s.id);
+        list.push(s);
+      }
+    }
+    list.sort((a, b) =>
+      String(a.inisial || a.nama || '').localeCompare(
+        String(b.inisial || b.nama || ''),
+        'id'
+      )
+    );
+    return list;
   }
 
   const cardHandlers = {
@@ -655,6 +840,8 @@ export default function ForecastingPage() {
                       <ForecastObatCard
                         key={obat.id || obat.kode_obat}
                         obat={obat}
+                        suppliers={suppliersForObat(obat.kode_obat)}
+                        activeSupplierId={obat.active_supplier_id || null}
                         {...cardHandlers}
                       />
                     ))}
@@ -667,6 +854,8 @@ export default function ForecastingPage() {
                 <ForecastGrupCard
                   key={grup.nama}
                   grup={grup}
+                  suppliers={uniqueSuppliersForGrup(grup)}
+                  activeSupplierId={grup.recommended_grup_supplier_id || null}
                   expanded={isOpen}
                   onToggle={() =>
                     setExpanded((prev) => ({
@@ -679,6 +868,8 @@ export default function ForecastingPage() {
                     <ForecastObatCard
                       key={obat.id || obat.kode_obat}
                       obat={obat}
+                      suppliers={suppliersForObat(obat.kode_obat)}
+                      activeSupplierId={obat.active_supplier_id || null}
                       {...cardHandlers}
                     />
                   ))}
@@ -747,15 +938,35 @@ export default function ForecastingPage() {
         onReset={handleFilterReset}
       />
 
-      {detailObat && !editOpen ? (
+      {detailObat && !editOpen && !deleting ? (
         <ObatYeloDetailSheet
           obat={detailObat}
           suppliers={supplierMap[detailObat.kode_obat] || []}
           onClose={() => setDetailObat(null)}
           onEdit={canEditObat ? openEditFromDetail : null}
-          onDelete={null}
+          onDelete={
+            canHapusObat
+              ? (obat) => {
+                  setDetailObat(null);
+                  setDeleting(obat);
+                }
+              : null
+          }
           onToggleVmedis={canEditObat ? handleToggleVmedis : null}
           vmedisBusy={vmedisBusy}
+        />
+      ) : null}
+
+      {deleting ? (
+        <ConfirmDeleteModal
+          confirmName={deleting.nama_obat}
+          title="Hapus Obat"
+          entityLabel="obat"
+          submitting={deleteSubmitting}
+          onClose={() => {
+            if (!deleteSubmitting) setDeleting(null);
+          }}
+          onConfirm={handleConfirmDelete}
         />
       ) : null}
 
@@ -763,7 +974,10 @@ export default function ForecastingPage() {
         <ObatYeloFormModal
           mode="edit"
           values={editForm}
-          onChange={setEditForm}
+          onChange={(e) => {
+            const { name, value } = e.target;
+            setEditForm((prev) => ({ ...prev, [name]: value }));
+          }}
           onField={(key, value) =>
             setEditForm((prev) => ({ ...prev, [key]: value }))
           }
@@ -782,11 +996,28 @@ export default function ForecastingPage() {
           }}
           submitting={editSubmitting}
           error={editError}
-          onClose={() => {
-            if (!editSubmitting) setEditOpen(false);
-          }}
+          onClose={closeEditForm}
           onSubmit={handleEditSubmit}
-          showSupplierField={false}
+          showSupplierField={isOwner}
+          supplierOptions={allSuppliers}
+          supplierValue={editSuppliers}
+          onSupplierAdd={handleSupplierAdd}
+          onSupplierRemove={handleSupplierRemove}
+        />
+      ) : null}
+
+      {pendingSupplier ? (
+        <PricelistPickSheet
+          supplier={pendingSupplier}
+          items={pricelistItems}
+          loading={pricelistLoading}
+          onClose={() => {
+            if (!pricelistLoading) {
+              setPendingSupplier(null);
+              setPricelistItems([]);
+            }
+          }}
+          onPick={handlePricelistPicked}
         />
       ) : null}
 

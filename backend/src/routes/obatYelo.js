@@ -250,7 +250,23 @@ async function fetchObatByKode(kodeObat) {
     .select(OBAT_SELECT)
     .eq('kode_obat', kodeObat)
     .maybeSingle();
-  return { data, error };
+  if (error || !data) return { data, error };
+
+  try {
+    const [stokMap, openPenandaanKodeSet] = await Promise.all([
+      loadLatestStokRingkasanMap(),
+      loadOpenPenandaanKodeSet(),
+    ]);
+    const [enriched] = attachStokRingkasan(
+      [data],
+      stokMap,
+      openPenandaanKodeSet
+    );
+    return { data: enriched, error: null };
+  } catch (enrichErr) {
+    console.error('[fetchObatByKode] enrich stok', enrichErr);
+    return { data, error: null };
+  }
 }
 
 // GET /api/obat-yelo?page=1&limit=50&search=  |  ?all=1 untuk tarik semua

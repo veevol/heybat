@@ -33,7 +33,7 @@ import {
 
 const PAGE_CHUNK = 50;
 
-const EMPTY_SORT = { key: null, direction: 'asc' };
+const EMPTY_SORT = { key: 'nama', direction: 'asc' };
 const EMPTY_FILTERS = {
   pbf: emptyFilterSection(),
   satuan: emptyFilterSection(),
@@ -191,11 +191,11 @@ export default function MatchingVerifikasiPage() {
       list = [...list].sort((a, b) => {
         const an = String(
           a.pricelist_nama_barang || a.pricelist_kode_pbf || ''
-        ).toLowerCase();
+        );
         const bn = String(
           b.pricelist_nama_barang || b.pricelist_kode_pbf || ''
-        ).toLowerCase();
-        const cmp = an.localeCompare(bn, 'id');
+        );
+        const cmp = an.localeCompare(bn, 'id', { sensitivity: 'base' });
         return sort.direction === 'asc' ? cmp : -cmp;
       });
     } else if (sort.key === 'tanggal') {

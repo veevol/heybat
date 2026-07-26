@@ -88,7 +88,7 @@ export default function DefektaSheet({
       title={
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
           <h2 className="min-w-0 truncate text-[15px] font-semibold leading-none text-text-primary">
-            Defekta - {obat.nama_obat}
+            Def: {obat.nama_obat}
           </h2>
           <div className="flex shrink-0 items-center gap-1">
             <span className="rounded-[4px] bg-[#2e2d34] px-1.5 py-1 text-[10px] font-semibold leading-none text-text-secondary">
