@@ -213,10 +213,20 @@ function satuan2Nama(obat) {
   );
 }
 
-/** Bisa pecah ke 2 tingkat satuan (konversi > 0 dan satuan_2 ada). */
+/** Bisa pecah ke 2 tingkat satuan (konversi > 1, satuan_2 ada, dan beda dari satuan_1). */
 export function canPecahSatuan(obat) {
   const konv = Number(obat?.konversi);
-  return Number.isFinite(konv) && konv > 0 && Boolean(satuan2Nama(obat));
+  if (!Number.isFinite(konv) || konv <= 1) return false;
+  const sat2 = satuan2Nama(obat);
+  if (!sat2) return false;
+  const sat1 = satuan1Nama(obat);
+  if (
+    sat1 &&
+    String(sat1).trim().toLowerCase() === String(sat2).trim().toLowerCase()
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**

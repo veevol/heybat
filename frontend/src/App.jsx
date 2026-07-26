@@ -5,6 +5,7 @@ import RequireMenuAksi from './components/RequireMenuAksi';
 import { AuthProvider } from './context/AuthContext';
 import DataObatYeloPage from './pages/DataObatYeloPage';
 import DataSupplierPage from './pages/DataSupplierPage';
+import ForecastingPage from './pages/ForecastingPage';
 import KelolaAksesPage from './pages/KelolaAksesPage';
 import LoginPage from './pages/LoginPage';
 import MatchingBelumPage from './pages/MatchingBelumPage';
@@ -64,6 +65,17 @@ export default function App() {
               }
             >
               <Route path="/stok" element={<StokPage />} />
+            </Route>
+            <Route
+              element={
+                <RequireMenuAksi
+                  menu="forecasting"
+                  aksi="lihat"
+                  fallback="/data-supplier"
+                />
+              }
+            >
+              <Route path="/forecasting" element={<ForecastingPage />} />
             </Route>
             <Route
               path="/akun"

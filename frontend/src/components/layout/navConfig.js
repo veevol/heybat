@@ -2,6 +2,7 @@ import {
   FileSpreadsheet,
   GitCompareArrows,
   LayoutGrid,
+  LineChart,
   Package,
   Pill,
   Plus,
@@ -72,6 +73,15 @@ export const PRIMARY_NAV_ITEMS = [
     type: 'link',
   },
   {
+    id: 'forecasting',
+    label: 'Forecast',
+    to: '/forecasting',
+    menuKode: 'forecasting',
+    match: (pathname) => pathname.startsWith('/forecasting'),
+    icon: LineChart,
+    type: 'link',
+  },
+  {
     id: 'akun',
     label: 'Akun',
     menuKode: null,
@@ -105,6 +115,13 @@ export const PAGE_ACTION_SLOTS = [
     label: 'Tambah',
     icon: Plus,
     ariaLabel: 'Tambah Obat Baru',
+  },
+  {
+    id: 'hitung-forecast',
+    match: (pathname) => pathname.startsWith('/forecasting'),
+    label: 'Hitung',
+    icon: Plus,
+    ariaLabel: 'Hitung Forecast Baru',
   },
 ];
 
