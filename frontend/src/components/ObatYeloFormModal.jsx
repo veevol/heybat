@@ -5,47 +5,31 @@ import SearchableSupplierMultiSelect from './SearchableSupplierMultiSelect';
 import { ObatModalTitle } from './ObatYeloDetailSheet';
 import { createRef } from '../api/refData';
 
-const inputClass =
-  'w-full rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] leading-snug text-text-primary outline-none transition placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow disabled:cursor-not-allowed disabled:opacity-60';
+const cardClass = 'rounded-[4px] bg-bg-base px-2.5 py-2 space-y-1.5';
 
-function Field({
-  label,
-  name,
-  value,
-  onChange,
-  disabled = false,
-  required = false,
-  placeholder = '',
-  hint = null,
-  type = 'text',
-}) {
+const inputClass =
+  'w-full rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-[13px] leading-snug text-text-primary outline-none transition placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow disabled:cursor-not-allowed disabled:opacity-60';
+
+function FormRow({ label, required = false, hint = null, children }) {
   return (
-    <label className="block space-y-0.5">
-      <span className="text-[11px] leading-none text-text-secondary">
+    <div className="grid grid-cols-[110px_1fr] items-start gap-1.5">
+      <span className="pt-1.5 text-[13px] leading-snug text-text-muted">
         {label}
         {required ? <span className="text-accent-yellow"> *</span> : null}
       </span>
-      <input
-        type={type}
-        name={name}
-        value={value}
-        onChange={onChange}
-        disabled={disabled}
-        required={required}
-        readOnly={disabled}
-        placeholder={placeholder}
-        className={inputClass}
-        step={type === 'number' ? 'any' : undefined}
-      />
-      {hint ? <p className="text-[10px] leading-snug text-text-muted">{hint}</p> : null}
-    </label>
+      <div className="min-w-0">
+        {children}
+        {hint ? (
+          <p className="mt-0.5 text-[10px] leading-snug text-text-muted">{hint}</p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
 /**
  * Form create/edit obat Yelo.
- * Urutan edit mengikuti detail card (tanpa Stok & Harga).
- * Field Supplier (multi) hanya untuk owner — dikontrol via showSupplierField.
+ * Edit: layout card + label kiri (selaras Detail). Tanpa Stok & Harga.
  */
 export default function ObatYeloFormModal({
   mode,
@@ -86,6 +70,7 @@ export default function ObatYeloFormModal({
       title={title}
       onClose={onClose}
       busy={submitting}
+      borderless
       footer={
         <div className="flex flex-col-reverse gap-1.5 sm:flex-row sm:justify-end">
           <button
@@ -107,109 +92,145 @@ export default function ObatYeloFormModal({
         </div>
       }
     >
-      <form id="obat-yelo-form" onSubmit={onSubmit} className="space-y-1.5">
-        <Field
-          label="Kode Obat"
-          name="kode_obat"
-          value={values.kode_obat}
-          onChange={onChange}
-          required={!isEdit}
-          disabled={isEdit}
-          placeholder="Contoh: OBT2606030003"
-          hint={
-            isEdit
-              ? 'Kode obat terkunci setelah dibuat.'
-              : 'Kode dari Vmedis / input manual — tidak bisa diubah setelah disimpan.'
-          }
-        />
-        <Field
-          label="Nama Obat"
-          name="nama_obat"
-          value={values.nama_obat}
-          onChange={onChange}
-          required
-          placeholder="Nama obat"
-        />
+      <form id="obat-yelo-form" onSubmit={onSubmit} className="space-y-2">
+        <section className={cardClass}>
+          <FormRow
+            label="Kode Obat"
+            required={!isEdit}
+            hint={
+              isEdit
+                ? 'Kode obat terkunci setelah dibuat.'
+                : 'Kode dari Vmedis / input manual — tidak bisa diubah setelah disimpan.'
+            }
+          >
+            <input
+              type="text"
+              name="kode_obat"
+              value={values.kode_obat}
+              onChange={onChange}
+              disabled={isEdit}
+              required={!isEdit}
+              readOnly={isEdit}
+              placeholder="Contoh: OBT2606030003"
+              className={inputClass}
+            />
+          </FormRow>
+          <FormRow label="Nama Obat" required>
+            <input
+              type="text"
+              name="nama_obat"
+              value={values.nama_obat}
+              onChange={onChange}
+              required
+              placeholder="Nama obat"
+              className={inputClass}
+            />
+          </FormRow>
+        </section>
 
-        <Field
-          label="Min Jual"
-          name="min_jual"
-          type="number"
-          value={values.min_jual}
-          onChange={onChange}
-          placeholder="0"
-        />
+        <section className={cardClass}>
+          <FormRow label="Min Jual">
+            <input
+              type="number"
+              name="min_jual"
+              value={values.min_jual}
+              onChange={onChange}
+              placeholder="0"
+              className={inputClass}
+              step="any"
+            />
+          </FormRow>
+          <FormRow label="Satuan 1">
+            <RefSelectWithAdd
+              hideLabel
+              label="Satuan 1"
+              value={values.satuan_1_id}
+              options={refs.satuan}
+              onChange={(id) => onField('satuan_1_id', id)}
+              onCreate={makeCreateHandler('satuan')}
+              allowEmpty
+              emptyLabel="Tidak ada"
+            />
+          </FormRow>
+          <FormRow label="Konversi">
+            <input
+              type="number"
+              name="konversi"
+              value={values.konversi}
+              onChange={onChange}
+              placeholder="0"
+              className={inputClass}
+              step="any"
+            />
+          </FormRow>
+          <FormRow label="Satuan 2">
+            <RefSelectWithAdd
+              hideLabel
+              label="Satuan 2"
+              value={values.satuan_2_id}
+              options={refs.satuan}
+              onChange={(id) => onField('satuan_2_id', id)}
+              onCreate={makeCreateHandler('satuan')}
+              allowEmpty
+              emptyLabel="Tidak ada"
+            />
+          </FormRow>
+        </section>
 
-        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-          <RefSelectWithAdd
-            label="Satuan 1"
-            value={values.satuan_1_id}
-            options={refs.satuan}
-            onChange={(id) => onField('satuan_1_id', id)}
-            onCreate={makeCreateHandler('satuan')}
-            allowEmpty
-            emptyLabel="Tidak ada"
-          />
-          <Field
-            label="Konversi"
-            name="konversi"
-            type="number"
-            value={values.konversi}
-            onChange={onChange}
-            placeholder="0"
-          />
-          <RefSelectWithAdd
-            label="Satuan 2"
-            value={values.satuan_2_id}
-            options={refs.satuan}
-            onChange={(id) => onField('satuan_2_id', id)}
-            onCreate={makeCreateHandler('satuan')}
-            allowEmpty
-            emptyLabel="Tidak ada"
-          />
-        </div>
-
-        <RefSelectWithAdd
-          label="Kandungan"
-          value={values.kandungan_id}
-          options={refs.kandungan}
-          onChange={(id) => onField('kandungan_id', id)}
-          onCreate={makeCreateHandler('kandungan')}
-          allowEmpty
-          emptyLabel="Tidak ada"
-        />
-
-        <RefSelectWithAdd
-          label="Substitusi"
-          value={values.grup_substitusi_id}
-          options={refs['grup-substitusi']}
-          onChange={(id) => onField('grup_substitusi_id', id)}
-          onCreate={makeCreateHandler('grup-substitusi')}
-          allowEmpty
-          emptyLabel="Tidak ada substitusi"
-        />
-
-        <RefSelectWithAdd
-          label="Golongan"
-          value={values.golongan_id}
-          options={refs.golongan}
-          onChange={(id) => onField('golongan_id', id)}
-          onCreate={makeCreateHandler('golongan')}
-          allowEmpty
-          emptyLabel="Tidak ada"
-        />
-
-        {showSupplierField ? (
-          <SearchableSupplierMultiSelect
-            options={supplierOptions}
-            value={supplierValue}
-            onAdd={onSupplierAdd}
-            onRemove={onSupplierRemove}
-            disabled={submitting}
-            placeholder="Tambah supplier…"
-            hint="Hanya owner. Tambah → matching langsung terverifikasi. Hapus → status ditolak (riwayat tetap)."
-          />
-        ) : null}
+        <section className={cardClass}>
+          <FormRow label="Kandungan">
+            <RefSelectWithAdd
+              hideLabel
+              label="Kandungan"
+              value={values.kandungan_id}
+              options={refs.kandungan}
+              onChange={(id) => onField('kandungan_id', id)}
+              onCreate={makeCreateHandler('kandungan')}
+              allowEmpty
+              emptyLabel="Tidak ada"
+            />
+          </FormRow>
+          <FormRow label="Substitusi">
+            <RefSelectWithAdd
+              hideLabel
+              label="Substitusi"
+              value={values.grup_substitusi_id}
+              options={refs['grup-substitusi']}
+              onChange={(id) => onField('grup_substitusi_id', id)}
+              onCreate={makeCreateHandler('grup-substitusi')}
+              allowEmpty
+              emptyLabel="Tidak ada substitusi"
+            />
+          </FormRow>
+          <FormRow label="Golongan">
+            <RefSelectWithAdd
+              hideLabel
+              label="Golongan"
+              value={values.golongan_id}
+              options={refs.golongan}
+              onChange={(id) => onField('golongan_id', id)}
+              onCreate={makeCreateHandler('golongan')}
+              allowEmpty
+              emptyLabel="Tidak ada"
+            />
+          </FormRow>
+          {showSupplierField ? (
+            <FormRow
+              label="Supplier"
+              hint="Hanya owner. Tambah → matching langsung terverifikasi. Hapus → status ditolak (riwayat tetap)."
+            >
+              <SearchableSupplierMultiSelect
+                hideLabel
+                options={supplierOptions}
+                value={supplierValue}
+                onAdd={onSupplierAdd}
+                onRemove={onSupplierRemove}
+                disabled={submitting}
+                placeholder="Tambah supplier…"
+              />
+            </FormRow>
+          ) : null}
+        </section>
 
         {error ? (
           <p className="rounded-[4px] border border-state-error/40 bg-state-error/10 px-2 py-1.5 text-[12px] text-state-error">

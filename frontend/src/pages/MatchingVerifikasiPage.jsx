@@ -8,7 +8,10 @@ import {
   verifikasiMatching,
 } from '../api/matching';
 import AppShell from '../components/layout/AppShell';
-import FilterSortSearchSheet from '../components/FilterSortSearchSheet';
+import FilterSortSearchSheet, {
+  emptyFilterSection,
+  normalizeFilterSection,
+} from '../components/FilterSortSearchSheet';
 import SearchableObatSelect from '../components/SearchableObatSelect';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
@@ -31,7 +34,10 @@ import {
 const PAGE_CHUNK = 50;
 
 const EMPTY_SORT = { key: null, direction: 'asc' };
-const EMPTY_FILTERS = { pbf: [], satuan: [] };
+const EMPTY_FILTERS = {
+  pbf: emptyFilterSection(),
+  satuan: emptyFilterSection(),
+};
 
 function Skeleton() {
   return (
@@ -166,8 +172,8 @@ export default function MatchingVerifikasiPage() {
 
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const pbfSelected = filters.pbf || [];
-    const satuanSelected = filters.satuan || [];
+    const pbfSelected = normalizeFilterSection(filters.pbf).selected;
+    const satuanSelected = normalizeFilterSection(filters.satuan).selected;
 
     let list = items.filter((row) => {
       if (pbfSelected.length > 0 && !pbfSelected.includes(pbfLabel(row))) {
@@ -222,8 +228,8 @@ export default function MatchingVerifikasiPage() {
     setDraftSearch(search);
     setDraftSort(sort);
     setDraftFilters({
-      pbf: [...(filters.pbf || [])],
-      satuan: [...(filters.satuan || [])],
+      pbf: normalizeFilterSection(filters.pbf),
+      satuan: normalizeFilterSection(filters.satuan),
     });
     setSheetOpen(true);
   };
@@ -232,8 +238,8 @@ export default function MatchingVerifikasiPage() {
     setSearch(draftSearch);
     setSort(draftSort);
     setFilters({
-      pbf: [...(draftFilters.pbf || [])],
-      satuan: [...(draftFilters.satuan || [])],
+      pbf: normalizeFilterSection(draftFilters.pbf),
+      satuan: normalizeFilterSection(draftFilters.satuan),
     });
     setVisibleCount(PAGE_CHUNK);
     setSheetOpen(false);
@@ -242,7 +248,10 @@ export default function MatchingVerifikasiPage() {
   const handleReset = () => {
     setDraftSearch('');
     setDraftSort(EMPTY_SORT);
-    setDraftFilters({ pbf: [], satuan: [] });
+    setDraftFilters({
+      pbf: emptyFilterSection(),
+      satuan: emptyFilterSection(),
+    });
   };
 
   const selectedKodeFor = (row) =>

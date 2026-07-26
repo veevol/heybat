@@ -14,7 +14,10 @@ import { listSuppliers } from '../api/suppliers';
 import { listRef } from '../api/refData';
 import AppShell from '../components/layout/AppShell';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
-import FilterSortSearchSheet from '../components/FilterSortSearchSheet';
+import FilterSortSearchSheet, {
+  emptyFilterSection,
+  normalizeFilterSection,
+} from '../components/FilterSortSearchSheet';
 import ObatYeloCard from '../components/ObatYeloCard';
 import ObatYeloDetailSheet from '../components/ObatYeloDetailSheet';
 import ObatYeloFormModal from '../components/ObatYeloFormModal';
@@ -59,14 +62,28 @@ const EMPTY_REFS = {
 
 const EMPTY_SORT = { key: null, direction: 'asc' };
 const EMPTY_FILTERS = {
-  stok: ['Ready'],
-  supplier: [],
-  golongan: [],
-  substitusi: [],
-  satuan: [],
-  konversi: [],
-  status_vmedis: [],
+  stok: emptyFilterSection(['Ready']),
+  supplier: emptyFilterSection(),
+  golongan: emptyFilterSection(),
+  substitusi: emptyFilterSection(),
+  satuan: emptyFilterSection(),
+  konversi: emptyFilterSection(),
+  status_vmedis: emptyFilterSection(),
 };
+
+function isFieldEmpty(value) {
+  return value === null || value === undefined || value === '';
+}
+
+/** Match checklist filter: selected values OR includeEmpty for null/blank. */
+function matchesChecklistFilter(section, fieldValue) {
+  const { selected, includeEmpty } = normalizeFilterSection(section);
+  if (selected.length === 0 && !includeEmpty) return true;
+  const empty = isFieldEmpty(fieldValue);
+  if (includeEmpty && empty) return true;
+  if (!empty && selected.includes(fieldValue)) return true;
+  return false;
+}
 
 function hasStokData(obat) {
   const s = obat?.stok_ringkasan;
@@ -281,53 +298,77 @@ export default function DataObatYeloPage() {
     const q = search.trim().toLowerCase();
     let list = items.filter((obat) => {
       if (q) {
-        const blob = `${obat.nama_obat || ''} ${obat.kode_obat || ''}`.toLowerCase();
+        const blob = [
+          obat.nama_obat,
+          obat.kode_obat,
+          obat.kandungan?.nama,
+          obat.grup_substitusi?.nama,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
         if (!blob.includes(q)) return false;
       }
 
-      const fStok = filters.stok || [];
-      if (fStok.length > 0) {
+      const fStok = normalizeFilterSection(filters.stok);
+      if (fStok.selected.length > 0) {
         const ready = hasStokData(obat);
-        const okReady = fStok.includes('Ready') && ready;
-        const okKosong = fStok.includes('Kosong') && !ready;
+        const okReady = fStok.selected.includes('Ready') && ready;
+        const okKosong = fStok.selected.includes('Kosong') && !ready;
         if (!okReady && !okKosong) return false;
       }
 
-      const fSupplier = filters.supplier || [];
-      if (fSupplier.length > 0) {
+      const fSupplier = normalizeFilterSection(filters.supplier);
+      if (fSupplier.selected.length > 0 || fSupplier.includeEmpty) {
         const pills = (supplierMap[obat.kode_obat] || [])
           .map(supplierInisialLabel)
           .filter(Boolean);
-        if (!fSupplier.some((s) => pills.includes(s))) return false;
+        const empty = pills.length === 0;
+        const okEmpty = fSupplier.includeEmpty && empty;
+        const okSelected =
+          fSupplier.selected.length > 0 &&
+          fSupplier.selected.some((s) => pills.includes(s));
+        if (!okEmpty && !okSelected) return false;
       }
 
-      const fGol = filters.golongan || [];
-      if (fGol.length > 0 && !fGol.includes(obat.golongan?.nama)) return false;
-
-      const fSub = filters.substitusi || [];
-      if (fSub.length > 0 && !fSub.includes(obat.grup_substitusi?.nama)) {
+      if (!matchesChecklistFilter(filters.golongan, obat.golongan?.nama)) {
         return false;
       }
 
-      const fSat = filters.satuan || [];
-      if (fSat.length > 0) {
+      if (
+        !matchesChecklistFilter(
+          filters.substitusi,
+          obat.grup_substitusi?.nama
+        )
+      ) {
+        return false;
+      }
+
+      const fSat = normalizeFilterSection(filters.satuan);
+      if (fSat.selected.length > 0 || fSat.includeEmpty) {
         const sats = [obat.satuan_1?.nama, obat.satuan_2?.nama].filter(Boolean);
-        if (!fSat.some((s) => sats.includes(s))) return false;
+        const empty = sats.length === 0;
+        const okEmpty = fSat.includeEmpty && empty;
+        const okSelected =
+          fSat.selected.length > 0 && fSat.selected.some((s) => sats.includes(s));
+        if (!okEmpty && !okSelected) return false;
       }
 
-      const fKonv = filters.konversi || [];
-      if (fKonv.length > 0) {
-        const k = obat.konversi;
-        if (k === null || k === undefined || k === '') return false;
-        if (!fKonv.includes(String(k))) return false;
+      const konvRaw = obat.konversi;
+      const konvValue =
+        konvRaw === null || konvRaw === undefined || konvRaw === ''
+          ? null
+          : String(konvRaw);
+      if (!matchesChecklistFilter(filters.konversi, konvValue)) {
+        return false;
       }
 
-      const fStatus = filters.status_vmedis || [];
-      if (fStatus.length > 0) {
+      const fStatus = normalizeFilterSection(filters.status_vmedis);
+      if (fStatus.selected.length > 0) {
         const okSudah =
-          fStatus.includes('Sudah di Vmedis') && isSudahDiVmedis(obat);
+          fStatus.selected.includes('Sudah di Vmedis') && isSudahDiVmedis(obat);
         const okBelum =
-          fStatus.includes('Belum di Vmedis') && isBelumDiVmedis(obat);
+          fStatus.selected.includes('Belum di Vmedis') && isBelumDiVmedis(obat);
         if (!okSudah && !okBelum) return false;
       }
 
@@ -360,13 +401,13 @@ export default function DataObatYeloPage() {
     setDraftSearch(search);
     setDraftSort(sort);
     setDraftFilters({
-      stok: [...(filters.stok || [])],
-      supplier: [...(filters.supplier || [])],
-      golongan: [...(filters.golongan || [])],
-      substitusi: [...(filters.substitusi || [])],
-      satuan: [...(filters.satuan || [])],
-      konversi: [...(filters.konversi || [])],
-      status_vmedis: [...(filters.status_vmedis || [])],
+      stok: normalizeFilterSection(filters.stok),
+      supplier: normalizeFilterSection(filters.supplier),
+      golongan: normalizeFilterSection(filters.golongan),
+      substitusi: normalizeFilterSection(filters.substitusi),
+      satuan: normalizeFilterSection(filters.satuan),
+      konversi: normalizeFilterSection(filters.konversi),
+      status_vmedis: normalizeFilterSection(filters.status_vmedis),
     });
     setSheetOpen(true);
   };
@@ -375,13 +416,13 @@ export default function DataObatYeloPage() {
     setSearch(draftSearch);
     setSort(draftSort);
     setFilters({
-      stok: [...(draftFilters.stok || [])],
-      supplier: [...(draftFilters.supplier || [])],
-      golongan: [...(draftFilters.golongan || [])],
-      substitusi: [...(draftFilters.substitusi || [])],
-      satuan: [...(draftFilters.satuan || [])],
-      konversi: [...(draftFilters.konversi || [])],
-      status_vmedis: [...(draftFilters.status_vmedis || [])],
+      stok: normalizeFilterSection(draftFilters.stok),
+      supplier: normalizeFilterSection(draftFilters.supplier),
+      golongan: normalizeFilterSection(draftFilters.golongan),
+      substitusi: normalizeFilterSection(draftFilters.substitusi),
+      satuan: normalizeFilterSection(draftFilters.satuan),
+      konversi: normalizeFilterSection(draftFilters.konversi),
+      status_vmedis: normalizeFilterSection(draftFilters.status_vmedis),
     });
     setVisibleCount(PAGE_CHUNK);
     setSheetOpen(false);
@@ -390,7 +431,15 @@ export default function DataObatYeloPage() {
   const handleReset = () => {
     setDraftSearch('');
     setDraftSort(EMPTY_SORT);
-    setDraftFilters({ ...EMPTY_FILTERS });
+    setDraftFilters({
+      stok: emptyFilterSection(['Ready']),
+      supplier: emptyFilterSection(),
+      golongan: emptyFilterSection(),
+      substitusi: emptyFilterSection(),
+      satuan: emptyFilterSection(),
+      konversi: emptyFilterSection(),
+      status_vmedis: emptyFilterSection(),
+    });
   };
 
   function openEdit(obat) {
@@ -852,7 +901,7 @@ export default function DataObatYeloPage() {
         title="Filter Obat Yelo"
         searchValue={draftSearch}
         onSearchChange={setDraftSearch}
-        searchPlaceholder="Cari nama / kode obat…"
+        searchPlaceholder="Cari nama, kandungan, substitusi, kode obat..."
         sortOptions={[
           { key: 'nama', label: 'Nama' },
           { key: 'kode', label: 'Kode Obat' },
@@ -867,11 +916,19 @@ export default function DataObatYeloPage() {
             preserveOrder: true,
           },
           { key: 'supplier', label: 'Supplier', options: filterOptions.supplier },
-          { key: 'golongan', label: 'Golongan', options: filterOptions.golongan, preserveOrder: true },
+          {
+            key: 'golongan',
+            label: 'Golongan',
+            options: filterOptions.golongan,
+            preserveOrder: true,
+            showEmptyOption: true,
+          },
           {
             key: 'substitusi',
             label: 'Substitusi',
             options: filterOptions.substitusi,
+            showEmptyOption: true,
+            showSearchInline: true,
           },
           { key: 'satuan', label: 'Satuan', options: filterOptions.satuan },
           {

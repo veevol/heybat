@@ -4,102 +4,132 @@ import { ChevronDown, Flag } from 'lucide-react';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
 import {
-  formatNumberId,
-  formatRupiahId,
+  formatHargaPecahan,
   formatSatuanGabung,
-  golonganBadgeClass,
+  formatStokPecahan,
 } from '../lib/obatYelo';
+
+const cardClass = 'rounded-[4px] bg-bg-base px-2.5 py-2';
 
 function Row({ label, children }) {
   return (
     <div className="grid grid-cols-[110px_1fr] gap-1.5 text-[13px] leading-snug">
       <dt className="text-text-muted">{label}</dt>
-      <dd className="text-text-primary">{children || '—'}</dd>
+      <dd className="min-w-0 text-text-primary">{children || '—'}</dd>
     </div>
   );
 }
 
-function formatNumber(value) {
+function formatNumberPlain(value) {
   if (value === null || value === undefined || value === '') return null;
   return String(value);
 }
 
-/** Section "Stok & Harga" pada detail: total gabungan, breakdown per gudang, 3 harga, badge tindak lanjut. */
-function StokHargaSection({ stokRingkasan, kodeObat }) {
+function satuan1Nama(obat) {
+  return (
+    obat?.satuan_1?.nama ||
+    obat?.satuan_1_nama ||
+    (typeof obat?.satuan_1 === 'string' ? obat.satuan_1 : null) ||
+    null
+  );
+}
+
+function formatMinJual(obat) {
+  const min = obat?.min_jual;
+  if (min === null || min === undefined || min === '') return null;
+  const sat1 = satuan1Nama(obat);
+  return sat1 ? `${min} ${sat1}` : String(min);
+}
+
+/** Stok & harga — tanpa label section, HJ 1 / HJ 3 polos. */
+function StokHargaSection({ obat, stokRingkasan, kodeObat }) {
   const navigate = useNavigate();
   const belumAdaData =
     !stokRingkasan ||
     stokRingkasan.stok_total === null ||
     stokRingkasan.stok_total === undefined;
 
-  return (
-    <section className="rounded-[4px] border border-border-subtle bg-bg-base px-2.5 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-medium text-text-muted">Stok & Harga</p>
-        {stokRingkasan?.ada_penandaan_terbuka ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(
-                `/stok?tab=tindak&kode_obat=${encodeURIComponent(kodeObat)}`
-              )
-            }
-            className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-state-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-state-warning hover:bg-state-warning/25"
-          >
-            <Flag className="h-3 w-3" />
-            Ada tindak lanjut
-          </button>
-        ) : null}
-      </div>
+  const stokLabel = formatStokPecahan(
+    stokRingkasan?.stok_total,
+    obat,
+    stokRingkasan?.satuan
+  );
+  const h1Label = formatHargaPecahan(
+    stokRingkasan?.harga_1,
+    obat,
+    stokRingkasan?.satuan
+  );
+  const h3Label = formatHargaPecahan(
+    stokRingkasan?.harga_3,
+    obat,
+    stokRingkasan?.satuan
+  );
 
+  const flagBtn = stokRingkasan?.ada_penandaan_terbuka ? (
+    <button
+      type="button"
+      onClick={() =>
+        navigate(
+          `/stok?tab=tindak&kode_obat=${encodeURIComponent(kodeObat)}`
+        )
+      }
+      className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-state-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-state-warning hover:bg-state-warning/25"
+    >
+      <Flag className="h-3 w-3" />
+      Ada tindak lanjut
+    </button>
+  ) : null;
+
+  return (
+    <section className={cardClass}>
       {belumAdaData ? (
-        <p className="mt-1 text-[13px] text-text-muted">Belum ada data</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[13px] text-text-muted">Belum ada data</p>
+          {flagBtn}
+        </div>
       ) : (
-        <>
-          <p className="mt-1 text-[16px] font-semibold leading-none text-text-primary">
-            {formatNumberId(stokRingkasan.stok_total)}
-            {stokRingkasan.satuan ? (
-              <span className="ml-1 text-[12px] font-normal text-text-muted">
-                {stokRingkasan.satuan}
-              </span>
-            ) : null}
-          </p>
+        <div className="space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="min-w-0 text-[16px] font-bold leading-snug text-text-primary">
+              {stokLabel || '—'}
+            </p>
+            {flagBtn}
+          </div>
 
           {(stokRingkasan.gudang_list || []).length > 1 ? (
-            <ul className="mt-1.5 space-y-0.5 text-[11px] text-text-secondary">
+            <ul className="space-y-0.5 text-[11px] text-text-secondary">
               {stokRingkasan.gudang_list.map((g) => (
                 <li key={g.gudang} className="flex justify-between gap-2">
                   <span>{g.gudang}</span>
                   <span className="font-medium text-text-primary">
-                    {formatNumberId(g.stok_total)}
-                    {g.satuan ? ` ${g.satuan}` : ''}
+                    {formatStokPecahan(g.stok_total, obat, g.satuan) ||
+                      formatNumberPlain(g.stok_total) ||
+                      '—'}
                   </span>
                 </li>
               ))}
             </ul>
           ) : null}
 
-          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-text-secondary">
-            <span>H1 (Retail): {formatRupiahId(stokRingkasan.harga_1) || '—'}</span>
-            <span>H2 (Kontrol Margin): {formatRupiahId(stokRingkasan.harga_2) || '—'}</span>
-            <span>
-              H3 (Grosir Mitra/Karyawan): {formatRupiahId(stokRingkasan.harga_3) || '—'}
-            </span>
+          <div className="space-y-0.5 text-[11px] leading-snug text-text-secondary">
+            <p>HJ 1: {h1Label || '—'}</p>
+            <p>HJ 3: {h3Label || '—'}</p>
           </div>
-        </>
+        </div>
       )}
     </section>
   );
 }
 
+/** Header sama gaya Section 1 kartu list: nama bold + pill kode. */
 export function ObatModalTitle({ nama, kode }) {
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <h2 className="truncate text-[15px] font-semibold leading-none text-text-primary">
+    <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+      <h2 className="min-w-0 flex-1 truncate text-[13px] font-bold leading-none text-text-primary">
         {nama || 'Obat'}
       </h2>
       {kode ? (
-        <span className="shrink-0 rounded-[4px] bg-accent-yellow px-1.5 py-0.5 text-[10px] font-semibold leading-none text-bg-base">
+        <span className="shrink-0 rounded-[4px] bg-[#2e2d34] px-1.5 py-1 text-[10px] font-semibold leading-none text-text-secondary">
           {kode}
         </span>
       ) : null}
@@ -132,16 +162,19 @@ export default function ObatYeloDetailSheet({
   if (!obat) return null;
 
   const golonganNama = obat.golongan?.nama;
-  const satuanGabung = formatSatuanGabung(obat);
-  const pills = (suppliers || [])
+  const isiKemasan = formatSatuanGabung(obat);
+  const minJualLabel = formatMinJual(obat);
+  const supplierText = (suppliers || [])
     .map((s) => s.inisial || s.nama)
-    .filter(Boolean);
+    .filter(Boolean)
+    .join(', ');
   const showVmedis = obat.asal_input === 'app';
 
   return (
     <SheetModal
       title={<ObatModalTitle nama={obat.nama_obat} kode={obat.kode_obat} />}
       onClose={onClose}
+      borderless
       footer={
         onEdit ? (
           <button
@@ -154,46 +187,28 @@ export default function ObatYeloDetailSheet({
         ) : null
       }
     >
-      <div className="space-y-3">
+      <div className="space-y-2">
         <StokHargaSection
+          obat={obat}
           stokRingkasan={obat.stok_ringkasan}
           kodeObat={obat.kode_obat}
         />
 
-        <dl className="space-y-1.5">
-          <Row label="Min Jual">{formatNumber(obat.min_jual)}</Row>
-          <Row label="Satuan">{satuanGabung}</Row>
-          <Row label="Kandungan">{obat.kandungan?.nama}</Row>
-          <Row label="Substitusi">
-            {obat.grup_substitusi?.nama || null}
-          </Row>
-          <Row label="Golongan">
-            {golonganNama ? (
-              <span
-                className={`inline-block rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none ${golonganBadgeClass(golonganNama)}`}
-              >
-                {golonganNama}
-              </span>
-            ) : null}
-          </Row>
-          <Row label="Supplier">
-            {pills.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {pills.map((label) => (
-                  <span
-                    key={label}
-                    className="rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-                  >
-                    {label}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </Row>
-        </dl>
+        <section className={`${cardClass} space-y-1.5`}>
+          <dl className="space-y-1.5">
+            <Row label="Isi Kemasan">{isiKemasan}</Row>
+            <Row label="Min Jual">{minJualLabel}</Row>
+            <Row label="Kandungan">{obat.kandungan?.nama}</Row>
+            <Row label="Substitusi">{obat.grup_substitusi?.nama || null}</Row>
+            <Row label="Golongan">{golonganNama || null}</Row>
+            <Row label="Supplier">{supplierText || null}</Row>
+          </dl>
+        </section>
 
         {showVmedis && onToggleVmedis ? (
-          <label className="flex cursor-pointer items-center gap-2 rounded-[4px] border border-border-subtle px-2.5 py-2">
+          <label
+            className={`flex cursor-pointer items-center gap-2 ${cardClass}`}
+          >
             <input
               type="checkbox"
               checked={Boolean(obat.sudah_ditambah_vmedis)}
@@ -209,11 +224,11 @@ export default function ObatYeloDetailSheet({
         ) : null}
 
         {onDelete ? (
-          <section className="overflow-hidden rounded-[4px] border border-state-error/50">
+          <section className="overflow-hidden rounded-[4px] bg-bg-base">
             <button
               type="button"
               onClick={() => setDangerOpen((v) => !v)}
-              className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-state-error/5"
+              className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-bg-surface-hover"
             >
               <span className="text-[13px] font-semibold text-state-error">
                 Danger Zone
@@ -225,7 +240,7 @@ export default function ObatYeloDetailSheet({
               />
             </button>
             {dangerOpen ? (
-              <div className="border-t border-state-error/40 px-2.5 py-2">
+              <div className="border-t border-border-subtle px-2.5 py-2">
                 <p className="text-[11px] leading-snug text-text-muted">
                   Hapus obat dari master data Yelo. Tidak bisa dibatalkan.
                 </p>

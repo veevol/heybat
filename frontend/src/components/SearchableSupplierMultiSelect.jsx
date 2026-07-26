@@ -22,6 +22,7 @@ export default function SearchableSupplierMultiSelect({
   placeholder = 'Cari supplier…',
   disabled = false,
   hint = null,
+  hideLabel = false,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -66,10 +67,12 @@ export default function SearchableSupplierMultiSelect({
   }
 
   return (
-    <div className="block space-y-0.5">
-      <span className="text-[11px] leading-none text-text-secondary">
-        Supplier
-      </span>
+    <div className={hideLabel ? 'block' : 'block space-y-0.5'}>
+      {!hideLabel ? (
+        <span className="text-[11px] leading-none text-text-secondary">
+          Supplier
+        </span>
+      ) : null}
 
       {value.length > 0 ? (
         <div className="mb-1 flex flex-wrap gap-1">

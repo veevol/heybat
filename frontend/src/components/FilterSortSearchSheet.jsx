@@ -1,6 +1,35 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, Search } from 'lucide-react';
 import SheetModal from './SheetModal';
+
+export const EMPTY_FILTER_OPTION_LABEL = '(Kosong / Tidak ada data)';
+
+/** @param {string[]} [selected] */
+export function emptyFilterSection(selected = []) {
+  return { selected: [...selected], includeEmpty: false };
+}
+
+/** Normalize array legacy atau { selected, includeEmpty }. */
+export function normalizeFilterSection(value) {
+  if (Array.isArray(value)) {
+    return { selected: [...value], includeEmpty: false };
+  }
+  if (value && typeof value === 'object') {
+    return {
+      selected: Array.isArray(value.selected) ? [...value.selected] : [],
+      includeEmpty: Boolean(value.includeEmpty),
+    };
+  }
+  return emptyFilterSection();
+}
+
+function cloneFilterState(state = {}) {
+  const next = {};
+  for (const [key, value] of Object.entries(state)) {
+    next[key] = normalizeFilterSection(value);
+  }
+  return next;
+}
 
 /**
  * Reusable filter / sort / search bottom-sheet.
@@ -16,9 +45,16 @@ import SheetModal from './SheetModal';
  *   sortOptions?: Array<{ key: string, label: string }>,
  *   sortState?: { key: string | null, direction: 'asc' | 'desc' },
  *   onSortChange?: (next: { key: string | null, direction: 'asc' | 'desc' }) => void,
- *   filterGroups?: Array<{ key: string, label: string, options: string[], preserveOrder?: boolean }>,
- *   filterState?: Record<string, string[]>,
- *   onFilterChange?: (next: Record<string, string[]>) => void,
+ *   filterGroups?: Array<{
+ *     key: string,
+ *     label: string,
+ *     options: string[],
+ *     preserveOrder?: boolean,
+ *     showEmptyOption?: boolean,
+ *     showSearchInline?: boolean,
+ *   }>,
+ *   filterState?: Record<string, { selected: string[], includeEmpty?: boolean } | string[]>,
+ *   onFilterChange?: (next: Record<string, { selected: string[], includeEmpty: boolean }>) => void,
  *   onApply: () => void,
  *   onReset: () => void,
  * }} props
@@ -40,6 +76,14 @@ export default function FilterSortSearchSheet({
   onReset,
 }) {
   const [expanded, setExpanded] = useState(() => ({}));
+  const [optionSearch, setOptionSearch] = useState(() => ({}));
+
+  useEffect(() => {
+    if (!open) {
+      setOptionSearch({});
+      setExpanded({});
+    }
+  }, [open]);
 
   if (!open) return null;
 
@@ -55,15 +99,39 @@ export default function FilterSortSearchSheet({
     }
   }
 
-  function toggleFilterOption(groupKey, option) {
+  function patchSection(groupKey, patch) {
     if (!onFilterChange) return;
-    const current = filterState?.[groupKey] || [];
-    const nextSelected = current.includes(option)
-      ? current.filter((v) => v !== option)
-      : [...current, option];
+    const current = normalizeFilterSection(filterState?.[groupKey]);
     onFilterChange({
-      ...filterState,
-      [groupKey]: nextSelected,
+      ...cloneFilterState(filterState),
+      [groupKey]: { ...current, ...patch },
+    });
+  }
+
+  function toggleFilterOption(groupKey, option) {
+    const current = normalizeFilterSection(filterState?.[groupKey]);
+    const nextSelected = current.selected.includes(option)
+      ? current.selected.filter((v) => v !== option)
+      : [...current.selected, option];
+    patchSection(groupKey, { selected: nextSelected });
+  }
+
+  function toggleIncludeEmpty(groupKey) {
+    const current = normalizeFilterSection(filterState?.[groupKey]);
+    patchSection(groupKey, { includeEmpty: !current.includeEmpty });
+  }
+
+  function toggleSelectAll(groupKey, visibleOptions) {
+    const current = normalizeFilterSection(filterState?.[groupKey]);
+    const allVisibleSelected =
+      visibleOptions.length > 0 &&
+      visibleOptions.every((opt) => current.selected.includes(opt));
+    if (allVisibleSelected) {
+      patchSection(groupKey, { selected: [], includeEmpty: false });
+      return;
+    }
+    patchSection(groupKey, {
+      selected: [...new Set([...current.selected, ...visibleOptions])],
     });
   }
 
@@ -165,12 +233,29 @@ export default function FilterSortSearchSheet({
             </p>
             {filterGroups.map((group) => {
               const isOpen = Boolean(expanded[group.key]);
-              const selected = filterState?.[group.key] || [];
+              const section = normalizeFilterSection(filterState?.[group.key]);
+              const selected = section.selected;
+              const activeCount =
+                selected.length + (section.includeEmpty ? 1 : 0);
               const options = group.preserveOrder
                 ? [...(group.options || [])]
                 : [...(group.options || [])].sort((a, b) =>
                     String(a).localeCompare(String(b), 'id')
                   );
+              const q = group.showSearchInline
+                ? String(optionSearch[group.key] || '')
+                    .trim()
+                    .toLowerCase()
+                : '';
+              const visibleOptions = q
+                ? options.filter((option) =>
+                    String(option).toLowerCase().includes(q)
+                  )
+                : options;
+              const allVisibleSelected =
+                visibleOptions.length > 0 &&
+                visibleOptions.every((opt) => selected.includes(opt));
+
               return (
                 <div
                   key={group.key}
@@ -183,9 +268,9 @@ export default function FilterSortSearchSheet({
                   >
                     <span className="text-[13px] font-medium text-text-primary">
                       {group.label}
-                      {selected.length > 0 ? (
+                      {activeCount > 0 ? (
                         <span className="ml-1.5 text-[11px] font-semibold text-accent-yellow">
-                          ({selected.length})
+                          ({activeCount})
                         </span>
                       ) : null}
                     </span>
@@ -196,34 +281,101 @@ export default function FilterSortSearchSheet({
                     />
                   </button>
                   {isOpen ? (
-                    <ul className="max-h-44 space-y-0.5 overflow-y-auto px-2 py-1.5 scrollbar-hide">
-                      {options.length === 0 ? (
-                        <li className="px-1 py-1 text-[12px] text-text-muted">
-                          Tidak ada opsi
+                    <div className="space-y-1.5 px-2 pb-2 pt-0.5">
+                      {group.showSearchInline ? (
+                        <div className="relative">
+                          <Search
+                            className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-text-muted"
+                            strokeWidth={2}
+                          />
+                          <input
+                            type="search"
+                            value={optionSearch[group.key] || ''}
+                            onChange={(e) =>
+                              setOptionSearch((prev) => ({
+                                ...prev,
+                                [group.key]: e.target.value,
+                              }))
+                            }
+                            placeholder="Cari opsi..."
+                            className="h-8 w-full rounded-[4px] bg-bg-surface py-1 pl-7 pr-2 text-[12px] text-text-primary outline-none placeholder:text-text-muted focus:ring-1 focus:ring-accent-yellow"
+                            aria-label={`Cari opsi ${group.label}`}
+                          />
+                        </div>
+                      ) : null}
+
+                      <ul className="max-h-44 space-y-0.5 overflow-y-auto scrollbar-hide">
+                        <li className="mb-0.5 border-b border-border-subtle pb-1">
+                          <label
+                            className={`flex items-center gap-2 rounded-[4px] px-1 py-1.5 ${
+                              visibleOptions.length === 0
+                                ? 'cursor-not-allowed opacity-40'
+                                : 'cursor-pointer hover:bg-bg-surface-hover'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allVisibleSelected}
+                              disabled={visibleOptions.length === 0}
+                              onChange={() =>
+                                toggleSelectAll(group.key, visibleOptions)
+                              }
+                              className="h-3.5 w-3.5 shrink-0 accent-accent-yellow"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">
+                              Pilih Semua
+                            </span>
+                          </label>
                         </li>
-                      ) : (
-                        options.map((option) => {
-                          const checked = selected.includes(option);
-                          return (
-                            <li key={option}>
-                              <label className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1 py-1.5 hover:bg-bg-surface-hover">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() =>
-                                    toggleFilterOption(group.key, option)
-                                  }
-                                  className="h-3.5 w-3.5 shrink-0 accent-accent-yellow"
-                                />
-                                <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">
-                                  {option}
-                                </span>
-                              </label>
-                            </li>
-                          );
-                        })
-                      )}
-                    </ul>
+
+                        {group.showEmptyOption ? (
+                          <li>
+                            <label className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1 py-1.5 hover:bg-bg-surface-hover">
+                              <input
+                                type="checkbox"
+                                checked={section.includeEmpty}
+                                onChange={() => toggleIncludeEmpty(group.key)}
+                                className="h-3.5 w-3.5 shrink-0 accent-accent-yellow"
+                              />
+                              <span className="min-w-0 flex-1 truncate text-[13px] italic text-text-secondary">
+                                {EMPTY_FILTER_OPTION_LABEL}
+                              </span>
+                            </label>
+                          </li>
+                        ) : null}
+
+                        {options.length === 0 ? (
+                          <li className="px-1 py-1 text-[12px] text-text-muted">
+                            Tidak ada opsi
+                          </li>
+                        ) : visibleOptions.length === 0 ? (
+                          <li className="px-1 py-1 text-[12px] text-text-muted">
+                            Tidak ada yang cocok
+                          </li>
+                        ) : (
+                          visibleOptions.map((option) => {
+                            const checked = selected.includes(option);
+                            return (
+                              <li key={option}>
+                                <label className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1 py-1.5 hover:bg-bg-surface-hover">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() =>
+                                      toggleFilterOption(group.key, option)
+                                    }
+                                    className="h-3.5 w-3.5 shrink-0 accent-accent-yellow"
+                                  />
+                                  <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">
+                                    {option}
+                                  </span>
+                                </label>
+                              </li>
+                            );
+                          })
+                        )}
+                      </ul>
+                    </div>
                   ) : null}
                 </div>
               );

@@ -3,14 +3,24 @@ const SENSITIVE_GOLONGAN = new Set([
   'prekursor',
   'psikotropika',
   'oot',
-  'ssa',
 ]);
+
+/** Inisial pill golongan di kartu list. */
+const GOLONGAN_INISIAL = {
+  psikotropika: 'PSI',
+  prekursor: 'PRE',
+  oot: 'OOT',
+  ssa: 'SSA',
+  regular: 'REG',
+  alkes: 'ALK',
+};
 
 /** Urutan manual filter Golongan; sisanya alfabet di akhir. */
 export const GOLONGAN_FILTER_ORDER = [
   'Psikotropika',
   'Prekursor',
   'OOT',
+  'SSA',
   'Regular',
   'Alkes',
 ];
@@ -20,11 +30,17 @@ export function isSensitiveGolongan(nama) {
   return SENSITIVE_GOLONGAN.has(String(nama).trim().toLowerCase());
 }
 
+export function golonganInisial(nama) {
+  if (!nama) return null;
+  const key = String(nama).trim().toLowerCase();
+  return GOLONGAN_INISIAL[key] || String(nama).trim().slice(0, 3).toUpperCase();
+}
+
 export function golonganBadgeClass(nama) {
   if (isSensitiveGolongan(nama)) {
-    return 'bg-state-warning text-bg-base';
+    return 'bg-[#2e2d34] text-accent-yellow';
   }
-  return 'border border-border-subtle bg-bg-base text-text-secondary';
+  return 'bg-[#2e2d34] text-text-secondary';
 }
 
 /**
@@ -176,5 +192,111 @@ export function formatSatuanGabung(obat) {
   if (sat2) return sat2;
   if (konvStr) return konvStr;
   return null;
+}
+
+function satuan1Nama(obat, fallback = null) {
+  return (
+    obat?.satuan_1?.nama ||
+    obat?.satuan_1_nama ||
+    (typeof obat?.satuan_1 === 'string' ? obat.satuan_1 : null) ||
+    fallback ||
+    null
+  );
+}
+
+function satuan2Nama(obat) {
+  return (
+    obat?.satuan_2?.nama ||
+    obat?.satuan_2_nama ||
+    (typeof obat?.satuan_2 === 'string' ? obat.satuan_2 : null) ||
+    null
+  );
+}
+
+/** Bisa pecah ke 2 tingkat satuan (konversi > 0 dan satuan_2 ada). */
+export function canPecahSatuan(obat) {
+  const konv = Number(obat?.konversi);
+  return Number.isFinite(konv) && konv > 0 && Boolean(satuan2Nama(obat));
+}
+
+/**
+ * Stok pecahan 2 satuan, mis. "9 Box · 50 Tab".
+ * Tanpa konversi/satuan_2: "{qty} {satuan_1}".
+ */
+export function formatStokPecahan(stokTotal, obat, fallbackSatuan = null) {
+  if (stokTotal === null || stokTotal === undefined || stokTotal === '') {
+    return null;
+  }
+  const total = Number(stokTotal);
+  if (!Number.isFinite(total)) return null;
+
+  const sat1 = satuan1Nama(obat, fallbackSatuan);
+  if (canPecahSatuan(obat)) {
+    const konv = Number(obat.konversi);
+    const box = Math.floor(total / konv);
+    const sisa = total % konv;
+    const sat2 = satuan2Nama(obat);
+    const left = `${formatNumberId(box) ?? box} ${sat2}`;
+    const right = `${formatNumberId(sisa) ?? sisa}${sat1 ? ` ${sat1}` : ''}`;
+    return `${left} · ${right}`;
+  }
+
+  const qty = formatNumberId(total) ?? String(total);
+  return sat1 ? `${qty} ${sat1}` : qty;
+}
+
+/**
+ * Harga pecahan: "Rp X /Box · Rp Y /Tab" atau hanya "/Tab".
+ * @param {number|null|undefined} hargaSatuan1
+ * @param {object} obat
+ * @param {string|null} [fallbackSatuan]
+ */
+export function formatHargaPecahan(hargaSatuan1, obat, fallbackSatuan = null) {
+  const harga = formatRupiahId(hargaSatuan1);
+  if (!harga) return null;
+
+  const sat1 = satuan1Nama(obat, fallbackSatuan);
+  if (canPecahSatuan(obat)) {
+    const konv = Number(obat.konversi);
+    const perBox = Number(hargaSatuan1) * konv;
+    const hargaBox = formatRupiahId(perBox);
+    const sat2 = satuan2Nama(obat);
+    const left = hargaBox ? `${hargaBox} /${sat2}` : null;
+    const right = sat1 ? `${harga} /${sat1}` : harga;
+    return left ? `${left} · ${right}` : right;
+  }
+
+  return sat1 ? `${harga} /${sat1}` : harga;
+}
+
+/**
+ * Baris stok + HJ1 untuk kartu list.
+ * Stok pakai koma ("9 Box, 50 Tab"), harga tanpa "·".
+ * Null kalau stok_total belum ada.
+ * @returns {{ stok: string, harga: string | null } | null}
+ */
+export function formatStokHargaKartu(stokRingkasan, obat) {
+  if (
+    !stokRingkasan ||
+    stokRingkasan.stok_total === null ||
+    stokRingkasan.stok_total === undefined
+  ) {
+    return null;
+  }
+  const stokRaw = formatStokPecahan(
+    stokRingkasan.stok_total,
+    obat,
+    stokRingkasan.satuan
+  );
+  if (!stokRaw) return null;
+  const hargaRaw = formatHargaPecahan(
+    stokRingkasan.harga_1,
+    obat,
+    stokRingkasan.satuan
+  );
+  return {
+    stok: stokRaw.replace(/ · /g, ', '),
+    harga: hargaRaw ? hargaRaw.replace(/ · /g, ' ') : null,
+  };
 }
 

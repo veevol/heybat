@@ -23,6 +23,7 @@ export default function RefSelectWithAdd({
   emptyLabel = '—',
   disabled = false,
   required = false,
+  hideLabel = false,
 }) {
   const [adding, setAdding] = useState(false);
   const [newNama, setNewNama] = useState('');
@@ -68,11 +69,13 @@ export default function RefSelectWithAdd({
   }
 
   return (
-    <div className="block space-y-0.5">
-      <span className="text-[11px] leading-none text-text-secondary">
-        {label}
-        {required ? <span className="text-accent-yellow"> *</span> : null}
-      </span>
+    <div className={hideLabel ? 'block' : 'block space-y-0.5'}>
+      {!hideLabel ? (
+        <span className="text-[11px] leading-none text-text-secondary">
+          {label}
+          {required ? <span className="text-accent-yellow"> *</span> : null}
+        </span>
+      ) : null}
 
       {!adding ? (
         <select

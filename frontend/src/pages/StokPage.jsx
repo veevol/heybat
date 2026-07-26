@@ -21,7 +21,10 @@ import { createObatYelo, getObatYelo } from '../api/obatYelo';
 import { listRef } from '../api/refData';
 import AppShell from '../components/layout/AppShell';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
-import FilterSortSearchSheet from '../components/FilterSortSearchSheet';
+import FilterSortSearchSheet, {
+  emptyFilterSection,
+  normalizeFilterSection,
+} from '../components/FilterSortSearchSheet';
 import SheetModal from '../components/SheetModal';
 import StokRingkasConfirmModal from '../components/StokRingkasConfirmModal';
 import StokTandaiModal, { JENIS_OPTIONS } from '../components/StokTandaiModal';
@@ -32,7 +35,7 @@ import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 
 const VALID_STOK_TABS = ['stok', 'upload', 'tindak', 'riwayat'];
-const EMPTY_FILTERS = { gudang: [] };
+const EMPTY_FILTERS = { gudang: emptyFilterSection() };
 const EMPTY_SORT = { key: null, direction: 'asc' };
 const EMPTY_OBAT_FORM = {
   kode_obat: '',
@@ -589,7 +592,7 @@ export default function StokPage() {
 
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const gudangFilter = filters.gudang || [];
+    const gudangFilter = normalizeFilterSection(filters.gudang).selected;
     let list = items.filter((row) => {
       if (gudangFilter.length) {
         const hasGudang = (row.gudang_list || []).some((g) =>
@@ -647,7 +650,7 @@ export default function StokPage() {
 
   function openFilterSheet() {
     setDraftSearch(search);
-    setDraftFilters({ gudang: [...(filters.gudang || [])] });
+    setDraftFilters({ gudang: normalizeFilterSection(filters.gudang) });
     setDraftSort({ ...sortState });
     setFilterOpen(true);
   }
@@ -1323,16 +1326,16 @@ export default function StokPage() {
         onFilterChange={setDraftFilters}
         onApply={() => {
           setSearch(draftSearch);
-          setFilters({ gudang: [...(draftFilters.gudang || [])] });
+          setFilters({ gudang: normalizeFilterSection(draftFilters.gudang) });
           setSortState({ ...draftSort });
           setFilterOpen(false);
         }}
         onReset={() => {
           setDraftSearch('');
-          setDraftFilters(EMPTY_FILTERS);
+          setDraftFilters({ gudang: emptyFilterSection() });
           setDraftSort(EMPTY_SORT);
           setSearch('');
-          setFilters(EMPTY_FILTERS);
+          setFilters({ gudang: emptyFilterSection() });
           setSortState(EMPTY_SORT);
           setFilterOpen(false);
         }}
