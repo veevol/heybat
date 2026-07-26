@@ -116,13 +116,6 @@ export const PAGE_ACTION_SLOTS = [
     icon: Plus,
     ariaLabel: 'Tambah Obat Baru',
   },
-  {
-    id: 'hitung-forecast',
-    match: (pathname) => pathname.startsWith('/forecasting'),
-    label: 'Hitung',
-    icon: Plus,
-    ariaLabel: 'Hitung Forecast Baru',
-  },
 ];
 
 /** Max nav icons visible at once inside the expanded pill (content scrolls beyond this). */

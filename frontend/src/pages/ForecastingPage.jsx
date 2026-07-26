@@ -1,30 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { MoreVertical, SlidersHorizontal } from 'lucide-react';
 import {
-  History,
-  LineChart,
-  Plus,
-  Settings2,
-  SlidersHorizontal,
-} from 'lucide-react';
-import {
+  getDefektaCandidates,
   getForecastHasil,
   getForecastPengaturan,
   jalankanForecast,
   listForecastRiwayat,
-  updateForecastPengaturan,
+  resetDefektaPilihan,
+  saveDefektaPilihan,
 } from '../api/forecast';
 import { getSupplierMapAktif } from '../api/matching';
+import {
+  getObatYelo,
+  updateObatYelo,
+  updateStatusVmedis,
+} from '../api/obatYelo';
+import { listRef } from '../api/refData';
 import AppShell from '../components/layout/AppShell';
+import DefektaSheet from '../components/DefektaSheet';
 import {
   ForecastGrupCard,
   ForecastObatCard,
 } from '../components/ForecastCards';
+import ForecastMenuSheet from '../components/ForecastMenuSheet';
 import FilterSortSearchSheet, {
   emptyFilterSection,
   normalizeFilterSection,
 } from '../components/FilterSortSearchSheet';
-import SheetModal from '../components/SheetModal';
+import ObatYeloDetailSheet from '../components/ObatYeloDetailSheet';
+import ObatYeloFormModal from '../components/ObatYeloFormModal';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
@@ -35,52 +40,89 @@ const KATEGORI_OPTIONS = [
   { value: 'mitra', label: 'Mitra' },
 ];
 
-const VALID_TABS = ['hasil', 'riwayat', 'pengaturan'];
+const STOK_CUKUP = 'Stok Cukup';
+const STOK_KURANG = 'Stok Kurang';
+const STOK_OPTIONS = [STOK_CUKUP, STOK_KURANG];
+
 const EMPTY_SORT = { key: null, direction: 'asc' };
 const EMPTY_FILTERS = {
+  stok: emptyFilterSection([STOK_KURANG]),
   golongan: emptyFilterSection(),
   supplier: emptyFilterSection(),
 };
-
-function formatTanggal(iso) {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return String(iso);
-  }
-}
-
-function kategoriLabel(list) {
-  if (!Array.isArray(list) || list.length === 0) return '—';
-  return list
-    .map((k) => KATEGORI_OPTIONS.find((o) => o.value === k)?.label || k)
-    .join(', ');
-}
+const EMPTY_REFS = {
+  kandungan: [],
+  golongan: [],
+  satuan: [],
+  'grup-substitusi': [],
+};
+const EMPTY_FORM = {
+  kode_obat: '',
+  nama_obat: '',
+  kandungan_id: '',
+  golongan_id: '',
+  satuan_1_id: '',
+  satuan_2_id: '',
+  grup_substitusi_id: '',
+  konversi: '',
+  min_jual: '',
+};
 
 function supplierInisialLabel(s) {
   return s?.inisial || s?.nama || '';
 }
 
+function numOrNull(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function obatToForm(obat) {
+  return {
+    kode_obat: obat.kode_obat || '',
+    nama_obat: obat.nama_obat || '',
+    kandungan_id: obat.kandungan_id || obat.kandungan?.id || '',
+    golongan_id: obat.golongan_id || obat.golongan?.id || '',
+    satuan_1_id: obat.satuan_1_id || obat.satuan_1?.id || '',
+    satuan_2_id: obat.satuan_2_id || obat.satuan_2?.id || '',
+    grup_substitusi_id:
+      obat.grup_substitusi_id || obat.grup_substitusi?.id || '',
+    konversi: obat.konversi ?? '',
+    min_jual: obat.min_jual ?? '',
+  };
+}
+
+function formToPayload(form) {
+  return {
+    kode_obat: form.kode_obat.trim(),
+    nama_obat: form.nama_obat.trim(),
+    kandungan_id: form.kandungan_id || null,
+    golongan_id: form.golongan_id || null,
+    satuan_1_id: form.satuan_1_id || null,
+    satuan_2_id: form.satuan_2_id || null,
+    grup_substitusi_id: form.grup_substitusi_id || null,
+    konversi: numOrNull(form.konversi),
+    min_jual: numOrNull(form.min_jual),
+  };
+}
+
+function matchesStokFilter(kebutuhan, stokSelected) {
+  if (!stokSelected || stokSelected.length === 0) return true;
+  const kurang = (Number(kebutuhan) || 0) > 0;
+  const cukup = !kurang;
+  if (stokSelected.includes(STOK_KURANG) && kurang) return true;
+  if (stokSelected.includes(STOK_CUKUP) && cukup) return true;
+  return false;
+}
+
 export default function ForecastingPage() {
-  const { profile, hasAccess } = useAuth();
-  const isOwner = profile?.is_owner === true;
+  const { hasAccess } = useAuth();
   const canTambah = hasAccess('forecasting', 'tambah');
+  const canEditObat = hasAccess('data-obat-yelo', 'edit');
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const tabParam = searchParams.get('tab');
   const runIdParam = searchParams.get('run');
-  const tab = VALID_TABS.includes(tabParam)
-    ? tabParam === 'pengaturan' && !isOwner
-      ? 'hasil'
-      : tabParam
-    : 'hasil';
 
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
@@ -90,8 +132,9 @@ export default function ForecastingPage() {
     toastTimer.current = setTimeout(() => setToast(''), 3200);
   }, []);
 
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [periodeForecast, setPeriodeForecast] = useState(14);
+  const [periodeHistoriHitung, setPeriodeHistoriHitung] = useState(90);
   const [kategori, setKategori] = useState(['retail', 'mitra']);
   const [running, setRunning] = useState(false);
 
@@ -101,7 +144,6 @@ export default function ForecastingPage() {
   const [hasil, setHasil] = useState(null);
   const [hasilLoading, setHasilLoading] = useState(false);
   const [hasilError, setHasilError] = useState('');
-  const [showCukupStok, setShowCukupStok] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [supplierMap, setSupplierMap] = useState({});
 
@@ -114,17 +156,22 @@ export default function ForecastingPage() {
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
 
   const [pengaturan, setPengaturan] = useState(null);
-  const [periodeHistoriDraft, setPeriodeHistoriDraft] = useState(90);
-  const [pengaturanSaving, setPengaturanSaving] = useState(false);
 
-  const setTab = (next) => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev);
-      p.set('tab', next);
-      if (next !== 'hasil') p.delete('run');
-      return p;
-    });
-  };
+  const [detailObat, setDetailObat] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [vmedisBusy, setVmedisBusy] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState(EMPTY_FORM);
+  const [editRefs, setEditRefs] = useState(EMPTY_REFS);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const [defektaObat, setDefektaObat] = useState(null);
+  const [defektaLoading, setDefektaLoading] = useState(false);
+  const [defektaSaving, setDefektaSaving] = useState(false);
+  const [defektaCandidates, setDefektaCandidates] = useState([]);
+  const [defektaSelectedId, setDefektaSelectedId] = useState(null);
+  const [defektaRecommendedId, setDefektaRecommendedId] = useState(null);
 
   const loadRiwayat = useCallback(async () => {
     setRiwayatLoading(true);
@@ -163,9 +210,11 @@ export default function ForecastingPage() {
     try {
       const row = await getForecastPengaturan();
       setPengaturan(row);
-      setPeriodeHistoriDraft(row?.periode_histori_hari ?? 90);
+      setPeriodeHistoriHitung(row?.periode_histori_hari ?? 90);
+      return row;
     } catch (err) {
       showToast(err.message || 'Gagal memuat pengaturan');
+      return null;
     }
   }, [showToast]);
 
@@ -173,7 +222,8 @@ export default function ForecastingPage() {
     getSupplierMapAktif()
       .then((map) => setSupplierMap(map || {}))
       .catch(() => setSupplierMap({}));
-  }, []);
+    loadPengaturan();
+  }, [loadPengaturan]);
 
   useEffect(() => {
     loadRiwayat().then((rows) => {
@@ -181,7 +231,6 @@ export default function ForecastingPage() {
         setSearchParams(
           (prev) => {
             const p = new URLSearchParams(prev);
-            if (!p.get('tab')) p.set('tab', 'hasil');
             p.set('run', rows[0].id);
             return p;
           },
@@ -192,18 +241,10 @@ export default function ForecastingPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (tab === 'hasil' && runIdParam) {
+    if (runIdParam) {
       loadHasil(runIdParam);
     }
-  }, [tab, runIdParam, loadHasil]);
-
-  useEffect(() => {
-    if (tab === 'riwayat') loadRiwayat();
-  }, [tab, loadRiwayat]);
-
-  useEffect(() => {
-    if (tab === 'pengaturan' && isOwner) loadPengaturan();
-  }, [tab, isOwner, loadPengaturan]);
+  }, [runIdParam, loadHasil]);
 
   const filterOptions = useMemo(() => {
     const golonganNames = [];
@@ -225,6 +266,7 @@ export default function ForecastingPage() {
 
   const { visibleGrup, autoExpandNames } = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const fStok = normalizeFilterSection(filters.stok);
     const fGol = normalizeFilterSection(filters.golongan);
     const fSup = normalizeFilterSection(filters.supplier);
     const autoExpand = new Set();
@@ -272,23 +314,19 @@ export default function ForecastingPage() {
         }
 
         if (grup.tanpa_substitusi) {
-          // Obat "Tanpa Substitusi" berdiri sendiri (setara level grup) —
-          // filter checkbox tetap per-obat seperti biasa.
-          if (!showCukupStok) {
-            obat = obat.filter((o) => (Number(o.kebutuhan_beli) || 0) > 0);
-          }
+          obat = obat.filter((o) =>
+            matchesStokFilter(o.kebutuhan_beli, fStok.selected)
+          );
           if (obat.length === 0) return null;
         } else {
-          // Grup substitusi: keputusan tampil/sembunyi checkbox di level
-          // GRUP (pakai total kebutuhan asli grup, sebelum obat dibuang
-          // oleh checkbox) — kalau grup tampil, semua obatnya tampil apa
-          // adanya, tidak ada yang dibuang individual.
           if (obat.length === 0) return null;
           const totalKebutuhanAsli = obat.reduce(
             (n, o) => n + (Number(o.kebutuhan_beli) || 0),
             0
           );
-          if (!showCukupStok && totalKebutuhanAsli <= 0) return null;
+          if (!matchesStokFilter(totalKebutuhanAsli, fStok.selected)) {
+            return null;
+          }
         }
 
         const totalKebutuhan = obat.reduce(
@@ -329,7 +367,7 @@ export default function ForecastingPage() {
     }
 
     return { visibleGrup: list, autoExpandNames: autoExpand };
-  }, [hasil, search, filters, sort, showCukupStok, supplierMap]);
+  }, [hasil, search, filters, sort, supplierMap]);
 
   const isGrupOpen = (nama) => {
     if (Object.prototype.hasOwnProperty.call(expanded, nama)) {
@@ -342,6 +380,7 @@ export default function ForecastingPage() {
     setDraftSearch(search);
     setDraftSort(sort);
     setDraftFilters({
+      stok: normalizeFilterSection(filters.stok),
       golongan: normalizeFilterSection(filters.golongan),
       supplier: normalizeFilterSection(filters.supplier),
     });
@@ -352,6 +391,7 @@ export default function ForecastingPage() {
     setSearch(draftSearch);
     setSort(draftSort);
     setFilters({
+      stok: normalizeFilterSection(draftFilters.stok),
       golongan: normalizeFilterSection(draftFilters.golongan),
       supplier: normalizeFilterSection(draftFilters.supplier),
     });
@@ -362,9 +402,17 @@ export default function ForecastingPage() {
     setDraftSearch('');
     setDraftSort(EMPTY_SORT);
     setDraftFilters({
+      stok: emptyFilterSection([STOK_KURANG]),
       golongan: emptyFilterSection(),
       supplier: emptyFilterSection(),
     });
+  }
+
+  async function openMenu() {
+    setMenuOpen(true);
+    loadRiwayat();
+    if (!pengaturan) await loadPengaturan();
+    else setPeriodeHistoriHitung(pengaturan.periode_histori_hari ?? 90);
   }
 
   async function handleJalankan(e) {
@@ -373,25 +421,39 @@ export default function ForecastingPage() {
       showToast('Pilih minimal 1 kategori penjualan');
       return;
     }
-    const n = Number(periodeForecast);
-    if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    const nForecast = Number(periodeForecast);
+    if (
+      !Number.isFinite(nForecast) ||
+      nForecast <= 0 ||
+      !Number.isInteger(nForecast)
+    ) {
       showToast('Periode forecast harus bilangan bulat > 0');
+      return;
+    }
+    const nHistori = Number(periodeHistoriHitung);
+    if (
+      !Number.isFinite(nHistori) ||
+      nHistori <= 0 ||
+      !Number.isInteger(nHistori)
+    ) {
+      showToast('Periode histori harus bilangan bulat > 0');
       return;
     }
 
     setRunning(true);
     try {
       const result = await jalankanForecast({
-        periode_forecast_hari: n,
+        periode_forecast_hari: nForecast,
+        periode_histori_hari: nHistori,
         kategori_penjualan: kategori,
       });
       const runId = result.forecast_run_id;
       showToast(
         `Selesai: ${result.ringkasan?.perlu_beli ?? 0} obat perlu beli dari ${result.ringkasan?.total_obat ?? 0}`
       );
-      setSheetOpen(false);
+      setMenuOpen(false);
       await loadRiwayat();
-      setSearchParams({ tab: 'hasil', run: runId });
+      setSearchParams({ run: runId });
     } catch (err) {
       showToast(err.message || 'Gagal menjalankan forecast');
     } finally {
@@ -399,27 +461,9 @@ export default function ForecastingPage() {
     }
   }
 
-  async function handleSavePengaturan(e) {
-    e.preventDefault();
-    const n = Number(periodeHistoriDraft);
-    if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
-      showToast('Periode histori harus bilangan bulat > 0');
-      return;
-    }
-    setPengaturanSaving(true);
-    try {
-      const row = await updateForecastPengaturan(n);
-      setPengaturan(row);
-      showToast('Pengaturan disimpan');
-    } catch (err) {
-      showToast(err.message || 'Gagal menyimpan');
-    } finally {
-      setPengaturanSaving(false);
-    }
-  }
-
   function openRun(runId) {
-    setSearchParams({ tab: 'hasil', run: runId });
+    setMenuOpen(false);
+    setSearchParams({ run: runId });
   }
 
   function toggleKategori(value) {
@@ -428,29 +472,140 @@ export default function ForecastingPage() {
     );
   }
 
-  const tabBtn = (id, label, icon) => {
-    const Icon = icon;
-    return (
-      <button
-        type="button"
-        onClick={() => setTab(id)}
-        className={`inline-flex items-center gap-1.5 rounded-[4px] px-2.5 py-1.5 text-[12px] font-medium ${
-          tab === id
-            ? 'bg-accent-yellow/15 text-accent-yellow'
-            : 'text-text-secondary hover:bg-bg-surface-hover'
-        }`}
-      >
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </button>
-    );
+  async function openDetail(obatForecast) {
+    setDetailLoading(true);
+    try {
+      const full = await getObatYelo(obatForecast.kode_obat);
+      setDetailObat(full);
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat detail obat');
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function openEditFromDetail(obat) {
+    setDetailObat(null);
+    setEditForm(obatToForm(obat));
+    setEditError('');
+    setEditOpen(true);
+    try {
+      const [kandungan, golongan, satuan, grup] = await Promise.all([
+        listRef('kandungan'),
+        listRef('golongan'),
+        listRef('satuan'),
+        listRef('grup-substitusi'),
+      ]);
+      setEditRefs({
+        kandungan: kandungan || [],
+        golongan: golongan || [],
+        satuan: satuan || [],
+        'grup-substitusi': grup || [],
+      });
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat referensi');
+    }
+  }
+
+  async function handleEditSubmit(e) {
+    e.preventDefault();
+    setEditSubmitting(true);
+    setEditError('');
+    try {
+      const payload = formToPayload(editForm);
+      const saved = await updateObatYelo(payload.kode_obat, payload);
+      setEditOpen(false);
+      setDetailObat(saved);
+      showToast('Obat disimpan');
+      if (runIdParam) loadHasil(runIdParam);
+    } catch (err) {
+      setEditError(err.message || 'Gagal menyimpan');
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  async function handleToggleVmedis(obat, checked) {
+    setVmedisBusy(true);
+    try {
+      const saved = await updateStatusVmedis(obat.kode_obat, checked);
+      setDetailObat(saved);
+      showToast(checked ? 'Ditandai Vmedis' : 'Tanda Vmedis dihapus');
+    } catch (err) {
+      showToast(err.message || 'Gagal update Vmedis');
+    } finally {
+      setVmedisBusy(false);
+    }
+  }
+
+  async function openDefekta(obat) {
+    if (!runIdParam) {
+      showToast('Belum ada forecast run aktif');
+      return;
+    }
+    setDefektaObat(obat);
+    setDefektaLoading(true);
+    setDefektaCandidates([]);
+    setDefektaSelectedId(null);
+    setDefektaRecommendedId(null);
+    try {
+      const data = await getDefektaCandidates(runIdParam, obat.kode_obat);
+      setDefektaCandidates(data.candidates || []);
+      setDefektaRecommendedId(data.recommended_supplier_id || null);
+      setDefektaSelectedId(
+        data.selected_supplier_id || data.recommended_supplier_id || null
+      );
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat Defekta');
+      setDefektaObat(null);
+    } finally {
+      setDefektaLoading(false);
+    }
+  }
+
+  async function handleDefektaSave(supplierId) {
+    if (!runIdParam || !defektaObat || !supplierId) return;
+    const row = defektaCandidates.find((c) => c.supplier_id === supplierId);
+    setDefektaSaving(true);
+    try {
+      await saveDefektaPilihan(runIdParam, defektaObat.kode_obat, {
+        supplier_id: supplierId,
+        pricelist_kode_pbf: row?.pricelist_kode_pbf || null,
+      });
+      setDefektaSelectedId(supplierId);
+      showToast('Pilihan PBF disimpan');
+      setDefektaObat(null);
+    } catch (err) {
+      showToast(err.message || 'Gagal menyimpan Defekta');
+    } finally {
+      setDefektaSaving(false);
+    }
+  }
+
+  async function handleDefektaReset() {
+    if (!runIdParam || !defektaObat) return;
+    setDefektaSaving(true);
+    try {
+      await resetDefektaPilihan(runIdParam, defektaObat.kode_obat);
+      setDefektaSelectedId(defektaRecommendedId);
+      showToast('Kembali ke rekomendasi bobot tertinggi');
+    } catch (err) {
+      showToast(err.message || 'Gagal reset Defekta');
+    } finally {
+      setDefektaSaving(false);
+    }
+  }
+
+  const cardHandlers = {
+    onOpenDetail: openDetail,
+    onOpenDefekta: openDefekta,
   };
 
   return (
     <AppShell
       title="Forecasting"
       actions={
-        tab === 'hasil' ? (
+        <div className="flex items-center gap-0.5">
           <button
             type="button"
             onClick={openFilterSheet}
@@ -460,268 +615,97 @@ export default function ForecastingPage() {
           >
             <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
           </button>
-        ) : null
+          <button
+            type="button"
+            onClick={openMenu}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary hover:bg-bg-surface-hover hover:text-accent-yellow"
+            aria-label="Menu forecasting"
+          >
+            <MoreVertical className="h-4 w-4" strokeWidth={2} />
+          </button>
+        </div>
       }
-      pageAction={canTambah ? { onClick: () => setSheetOpen(true) } : null}
-      navLoading={hasilLoading || running}
+      pageAction={null}
+      navLoading={hasilLoading || running || detailLoading}
     >
-      <div className="mb-3 flex flex-wrap gap-1">
-        {tabBtn('hasil', 'Hasil', LineChart)}
-        {tabBtn('riwayat', 'Riwayat', History)}
-        {isOwner ? tabBtn('pengaturan', 'Pengaturan', Settings2) : null}
-      </div>
-
-      {tab === 'hasil' ? (
-        <div className="space-y-2">
-          {canTambah ? (
-            <button
-              type="button"
-              onClick={() => setSheetOpen(true)}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 sm:w-auto"
-            >
-              <Plus className="h-4 w-4" />
-              Hitung Forecast Baru
-            </button>
-          ) : null}
-
-          {hasil?.run ? (
-            <p className="text-[11px] leading-snug text-text-muted">
-              Run {formatTanggal(hasil.run.dijalankan_saat)} · Forecast{' '}
-              {hasil.run.periode_forecast_hari} hari · Histori{' '}
-              {hasil.run.periode_histori_hari} hari ·{' '}
-              {kategoriLabel(hasil.run.kategori_penjualan)}
-              {hasil.run.dijalankan_oleh
-                ? ` · oleh ${hasil.run.dijalankan_oleh}`
-                : ''}
-            </p>
-          ) : null}
-
-          <label className="flex cursor-pointer items-center gap-2 text-[12px] text-text-secondary">
-            <input
-              type="checkbox"
-              checked={showCukupStok}
-              onChange={(e) => setShowCukupStok(e.target.checked)}
-              className="h-3.5 w-3.5 accent-accent-yellow"
-            />
-            Tampilkan yang sudah cukup stok
-          </label>
-
-          {hasilLoading ? (
-            <div className="flex justify-center py-10">
-              <SubmitSpinner className="h-6 w-6" />
-            </div>
-          ) : hasilError ? (
-            <p className="rounded-[4px] bg-state-error/10 px-3 py-2 text-[13px] text-state-error">
-              {hasilError}
-            </p>
-          ) : !runIdParam ? (
-            <p className="py-8 text-center text-[13px] text-text-muted">
-              Belum ada forecast. Jalankan hitungan baru untuk mulai.
-            </p>
-          ) : visibleGrup.length === 0 ? (
-            <p className="py-8 text-center text-[13px] text-text-muted">
-              Tidak ada grup yang cocok
-              {!showCukupStok ? ' (aktifkan toggle / longgarkan filter)' : ''}.
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              {visibleGrup.map((grup) => {
-                if (grup.tanpa_substitusi) {
-                  return (
-                    <div key={grup.nama} className="space-y-1.5">
-                      {(grup.obat || []).map((obat) => (
-                        <ForecastObatCard
-                          key={obat.id || obat.kode_obat}
-                          obat={obat}
-                        />
-                      ))}
-                    </div>
-                  );
-                }
-
-                const isOpen = isGrupOpen(grup.nama);
+      <div className="space-y-2">
+        {hasilLoading ? (
+          <div className="flex justify-center py-10">
+            <SubmitSpinner className="h-6 w-6" />
+          </div>
+        ) : hasilError ? (
+          <p className="rounded-[4px] bg-state-error/10 px-3 py-2 text-[13px] text-state-error">
+            {hasilError}
+          </p>
+        ) : !runIdParam ? (
+          <p className="py-8 text-center text-[13px] text-text-muted">
+            Belum ada forecast. Buka menu titik tiga untuk menghitung.
+          </p>
+        ) : visibleGrup.length === 0 ? (
+          <p className="py-8 text-center text-[13px] text-text-muted">
+            Tidak ada grup yang cocok (longgarkan filter Stok / lainnya).
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {visibleGrup.map((grup) => {
+              if (grup.tanpa_substitusi) {
                 return (
-                  <ForecastGrupCard
-                    key={grup.nama}
-                    grup={grup}
-                    expanded={isOpen}
-                    onToggle={() =>
-                      setExpanded((prev) => ({
-                        ...prev,
-                        [grup.nama]: !isOpen,
-                      }))
-                    }
-                  >
+                  <div key={grup.nama} className="space-y-1.5">
                     {(grup.obat || []).map((obat) => (
                       <ForecastObatCard
                         key={obat.id || obat.kode_obat}
                         obat={obat}
+                        {...cardHandlers}
                       />
                     ))}
-                  </ForecastGrupCard>
+                  </div>
                 );
-              })}
-            </div>
-          )}
-        </div>
-      ) : null}
+              }
 
-      {tab === 'riwayat' ? (
-        <div className="space-y-1.5">
-          {riwayatLoading ? (
-            <div className="flex justify-center py-10">
-              <SubmitSpinner className="h-6 w-6" />
-            </div>
-          ) : riwayat.length === 0 ? (
-            <p className="py-8 text-center text-[13px] text-text-muted">
-              Belum ada riwayat forecast.
-            </p>
-          ) : (
-            riwayat.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                onClick={() => openRun(run.id)}
-                className={`w-full rounded-[4px] px-2.5 py-2 text-left hover:bg-bg-surface-hover ${
-                  runIdParam === run.id
-                    ? 'bg-accent-yellow/10'
-                    : 'bg-bg-surface'
-                }`}
-              >
-                <p className="text-[13px] font-medium text-text-primary">
-                  {formatTanggal(run.dijalankan_saat)}
-                </p>
-                <p className="text-[11px] text-text-muted">
-                  Forecast {run.periode_forecast_hari} hari · Histori{' '}
-                  {run.periode_histori_hari} hari ·{' '}
-                  {kategoriLabel(run.kategori_penjualan)}
-                </p>
-                {run.dijalankan_oleh ? (
-                  <p className="text-[10px] text-text-muted">
-                    oleh {run.dijalankan_oleh}
-                  </p>
-                ) : null}
-              </button>
-            ))
-          )}
-        </div>
-      ) : null}
-
-      {tab === 'pengaturan' && isOwner ? (
-        <form
-          onSubmit={handleSavePengaturan}
-          className="space-y-3 rounded-[4px] bg-bg-surface px-2.5 py-3"
-        >
-          <div>
-            <label className="block text-[11px] text-text-muted">
-              Periode histori (hari)
-            </label>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={periodeHistoriDraft}
-              onChange={(e) => setPeriodeHistoriDraft(e.target.value)}
-              className="mt-1 w-full rounded-[4px] border border-border-subtle bg-bg-base px-2.5 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow"
-            />
-            <p className="mt-1 text-[10px] leading-snug text-text-muted">
-              Dipakai untuk menghitung rata-rata penjualan harian saat forecast
-              dijalankan. Saat ini:{' '}
-              {pengaturan?.periode_histori_hari ?? '—'} hari.
-            </p>
-          </div>
-          <button
-            type="submit"
-            disabled={pengaturanSaving}
-            className="inline-flex items-center justify-center rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-70"
-          >
-            {pengaturanSaving ? <SubmitSpinner /> : 'Simpan'}
-          </button>
-        </form>
-      ) : null}
-
-      {sheetOpen ? (
-        <SheetModal
-          title={
-            <h2 className="text-[15px] font-semibold text-text-primary">
-              Hitung Forecast Baru
-            </h2>
-          }
-          onClose={() => {
-            if (!running) setSheetOpen(false);
-          }}
-          busy={running}
-          borderless
-          footer={
-            <button
-              type="submit"
-              form="forecast-jalankan-form"
-              disabled={running}
-              className="inline-flex w-full items-center justify-center rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-70"
-            >
-              {running ? (
-                <span className="inline-flex items-center gap-2">
-                  <SubmitSpinner /> Menghitung…
-                </span>
-              ) : (
-                'Jalankan'
-              )}
-            </button>
-          }
-        >
-          <form
-            id="forecast-jalankan-form"
-            onSubmit={handleJalankan}
-            className="space-y-3"
-          >
-            <div>
-              <label className="block text-[11px] text-text-muted">
-                Periode forecast (hari ke depan)
-              </label>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={periodeForecast}
-                onChange={(e) => setPeriodeForecast(e.target.value)}
-                disabled={running}
-                className="mt-1 w-full rounded-[4px] border border-border-subtle bg-bg-base px-2.5 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow"
-              />
-            </div>
-            <div>
-              <p className="mb-1 text-[11px] text-text-muted">
-                Kategori penjualan
-              </p>
-              <div className="space-y-1">
-                {KATEGORI_OPTIONS.map((opt) => (
-                  <label
-                    key={opt.value}
-                    className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1 py-1.5 hover:bg-bg-base"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={kategori.includes(opt.value)}
-                      onChange={() => toggleKategori(opt.value)}
-                      disabled={running}
-                      className="h-3.5 w-3.5 accent-accent-yellow"
+              const isOpen = isGrupOpen(grup.nama);
+              return (
+                <ForecastGrupCard
+                  key={grup.nama}
+                  grup={grup}
+                  expanded={isOpen}
+                  onToggle={() =>
+                    setExpanded((prev) => ({
+                      ...prev,
+                      [grup.nama]: !isOpen,
+                    }))
+                  }
+                >
+                  {(grup.obat || []).map((obat) => (
+                    <ForecastObatCard
+                      key={obat.id || obat.kode_obat}
+                      obat={obat}
+                      {...cardHandlers}
                     />
-                    <span className="text-[13px] text-text-primary">
-                      {opt.label}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <p className="mt-1.5 text-[10px] leading-snug text-text-muted">
-                Penjualan titipan dihitung sebagai bagian dari Retail.
-              </p>
-            </div>
-            <p className="text-[11px] leading-snug text-text-muted">
-              Proses menghitung semua obat Yelo. Bisa memakan waktu beberapa
-              detik.
-            </p>
-          </form>
-        </SheetModal>
-      ) : null}
+                  ))}
+                </ForecastGrupCard>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <ForecastMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        riwayat={riwayat}
+        riwayatLoading={riwayatLoading}
+        activeRunId={runIdParam}
+        onSelectRun={openRun}
+        canHitung={canTambah}
+        periodeHistori={periodeHistoriHitung}
+        onPeriodeHistoriChange={setPeriodeHistoriHitung}
+        periodeForecast={periodeForecast}
+        onPeriodeForecastChange={setPeriodeForecast}
+        kategori={kategori}
+        onToggleKategori={toggleKategori}
+        onHitung={handleJalankan}
+        running={running}
+      />
 
       <FilterSortSearchSheet
         open={filterOpen}
@@ -737,6 +721,12 @@ export default function ForecastingPage() {
         sortState={draftSort}
         onSortChange={setDraftSort}
         filterGroups={[
+          {
+            key: 'stok',
+            label: 'Stok',
+            options: STOK_OPTIONS,
+            preserveOrder: true,
+          },
           {
             key: 'golongan',
             label: 'Golongan',
@@ -755,6 +745,65 @@ export default function ForecastingPage() {
         onFilterChange={setDraftFilters}
         onApply={handleFilterApply}
         onReset={handleFilterReset}
+      />
+
+      {detailObat && !editOpen ? (
+        <ObatYeloDetailSheet
+          obat={detailObat}
+          suppliers={supplierMap[detailObat.kode_obat] || []}
+          onClose={() => setDetailObat(null)}
+          onEdit={canEditObat ? openEditFromDetail : null}
+          onDelete={null}
+          onToggleVmedis={canEditObat ? handleToggleVmedis : null}
+          vmedisBusy={vmedisBusy}
+        />
+      ) : null}
+
+      {editOpen ? (
+        <ObatYeloFormModal
+          mode="edit"
+          values={editForm}
+          onChange={setEditForm}
+          onField={(key, value) =>
+            setEditForm((prev) => ({ ...prev, [key]: value }))
+          }
+          refs={editRefs}
+          onRefCreated={(jenis, created) => {
+            setEditRefs((prev) => ({
+              ...prev,
+              [jenis]: [...(prev[jenis] || []), created],
+            }));
+            const idKey =
+              jenis === 'grup-substitusi'
+                ? 'grup_substitusi_id'
+                : `${jenis.replace(/-/g, '_')}_id`;
+            if (jenis === 'satuan') return;
+            setEditForm((prev) => ({ ...prev, [idKey]: created.id }));
+          }}
+          submitting={editSubmitting}
+          error={editError}
+          onClose={() => {
+            if (!editSubmitting) setEditOpen(false);
+          }}
+          onSubmit={handleEditSubmit}
+          showSupplierField={false}
+        />
+      ) : null}
+
+      <DefektaSheet
+        open={Boolean(defektaObat)}
+        obat={defektaObat}
+        candidates={defektaCandidates}
+        loading={defektaLoading}
+        saving={defektaSaving}
+        selectedSupplierId={defektaSelectedId}
+        recommendedSupplierId={defektaRecommendedId}
+        onSelectSupplier={setDefektaSelectedId}
+        onSave={handleDefektaSave}
+        onReset={handleDefektaReset}
+        onClose={() => {
+          if (!defektaSaving) setDefektaObat(null);
+        }}
       />
 
       <Toast message={toast} onClose={() => setToast('')} />

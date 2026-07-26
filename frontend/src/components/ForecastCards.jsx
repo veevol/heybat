@@ -1,10 +1,11 @@
-import { AlertTriangle, ChevronDown } from 'lucide-react';
+import { AlertTriangle, ChevronDown, MoreVertical } from 'lucide-react';
 import {
   canPecahSatuan,
   formatNumberId,
   formatStokPecahan,
   golonganBadgeClass,
   golonganInisial,
+  isSensitiveGolongan,
 } from '../lib/obatYelo';
 
 function satuan1Label(obatRow) {
@@ -65,7 +66,7 @@ function uniqueGolongan(obatList) {
 /**
  * Card 1 obat forecast — pola Section 1/2 sama Card Data Obat Yelo.
  */
-export function ForecastObatCard({ obat }) {
+export function ForecastObatCard({ obat, onOpenDetail, onOpenDefekta }) {
   const golonganNama = obat.golongan?.nama;
   const golonganLabel = golonganInisial(golonganNama);
   const stokProyeksi = `Stok ${formatQtyDenganSatuan(obat.stok_sekarang, obat)} · Proyeksi ${formatQtyDenganSatuan(obat.perkiraan_terjual, obat)}`;
@@ -73,9 +74,13 @@ export function ForecastObatCard({ obat }) {
 
   return (
     <article className="overflow-hidden rounded-[4px] border border-bg-surface bg-bg-surface shadow-sm shadow-black/10">
-      {/* Section 1 — nama + kemasan + kode + golongan */}
+      {/* Section 1 — nama + kemasan + kode + golongan + more */}
       <div className="flex min-w-0 items-center justify-between gap-2 bg-bg-surface px-2.5 py-1.5">
-        <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <button
+          type="button"
+          onClick={() => onOpenDefekta?.(obat)}
+          className="flex min-w-0 flex-1 items-baseline gap-1.5 text-left"
+        >
           <h3 className="min-w-0 shrink truncate text-[13px] font-bold leading-none text-text-primary">
             {obat.nama_obat}
           </h3>
@@ -84,33 +89,54 @@ export function ForecastObatCard({ obat }) {
               {kemasan}
             </span>
           ) : null}
-        </div>
+        </button>
         <div className="flex shrink-0 items-center gap-1">
-          <span className="rounded-[4px] bg-[#2e2d34] px-1.5 py-1 text-[10px] font-semibold leading-none text-text-secondary">
+          <button
+            type="button"
+            onClick={() => onOpenDefekta?.(obat)}
+            className="rounded-[4px] bg-[#2e2d34] px-1.5 py-1 text-[10px] font-semibold leading-none text-text-secondary"
+          >
             {obat.kode_obat}
-          </span>
+          </button>
           {golonganLabel ? (
-            <span
+            <button
+              type="button"
+              onClick={() => onOpenDefekta?.(obat)}
               className={`rounded-[4px] px-1.5 py-1 text-[10px] font-semibold leading-none ${golonganBadgeClass(golonganNama)}`}
               title={golonganNama}
             >
               {golonganLabel}
-            </span>
+            </button>
           ) : (
             <span className="text-[10px] text-text-muted">—</span>
           )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDetail?.(obat);
+            }}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-text-muted hover:bg-bg-surface-hover hover:text-accent-yellow"
+            aria-label={`Detail ${obat.nama_obat}`}
+          >
+            <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />
+          </button>
         </div>
       </div>
 
       {/* Section 2 — stok/proyeksi + kebutuhan */}
-      <div className="flex min-h-[18px] min-w-0 items-center justify-between gap-2 bg-[#2e2d34] px-2.5 py-1.5">
+      <button
+        type="button"
+        onClick={() => onOpenDefekta?.(obat)}
+        className="flex min-h-[18px] w-full min-w-0 items-center justify-between gap-2 bg-[#2e2d34] px-2.5 py-1.5 text-left"
+      >
         <span className="min-w-0 flex-1 truncate text-[11px] font-normal leading-snug text-text-secondary">
           {stokProyeksi}
         </span>
         <span className="shrink-0 text-[11px] font-bold leading-snug text-text-primary">
           {formatKebutuhan(obat)}
         </span>
-      </div>
+      </button>
     </article>
   );
 }
@@ -146,7 +172,7 @@ export function ForecastGrupCard({
             {grup.nama}
           </h3>
           <div className="flex shrink-0 items-center gap-1">
-            <span className="rounded-[4px] bg-[#2e2d34] px-1.5 py-1 text-[10px] font-semibold leading-none text-text-secondary">
+            <span className="rounded-[4px] bg-accent-yellow/5 px-1.5 py-1 text-[10px] font-semibold leading-none text-text-secondary">
               {count} obat
             </span>
             {golonganList.map((nama) => {
@@ -154,7 +180,11 @@ export function ForecastGrupCard({
               return (
                 <span
                   key={nama}
-                  className={`rounded-[4px] px-1.5 py-1 text-[10px] font-semibold leading-none ${golonganBadgeClass(nama)}`}
+                  className={`rounded-[4px] bg-accent-yellow/5 px-1.5 py-1 text-[10px] font-semibold leading-none ${
+                    isSensitiveGolongan(nama)
+                      ? 'text-accent-yellow'
+                      : 'text-text-secondary'
+                  }`}
                   title={nama}
                 >
                   {label}
@@ -187,7 +217,7 @@ export function ForecastGrupCard({
       </button>
 
       {expanded ? (
-        <div className="space-y-1.5 border-t border-border-subtle bg-bg-base px-2 py-2">
+        <div className="space-y-1.5 bg-accent-yellow/5 px-2 py-2">
           {children}
         </div>
       ) : null}

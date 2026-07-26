@@ -15,10 +15,15 @@ export async function updateForecastPengaturan(periodeHistoriHari) {
 export async function jalankanForecast({
   periode_forecast_hari,
   kategori_penjualan,
+  periode_histori_hari,
 }) {
   return apiJson(apiUrl('/api/forecast/jalankan'), {
     method: 'POST',
-    body: JSON.stringify({ periode_forecast_hari, kategori_penjualan }),
+    body: JSON.stringify({
+      periode_forecast_hari,
+      kategori_penjualan,
+      periode_histori_hari,
+    }),
   });
 }
 
@@ -29,5 +34,34 @@ export async function listForecastRiwayat() {
 export async function getForecastHasil(runId) {
   return apiJson(
     apiUrl(`/api/forecast/hasil/${encodeURIComponent(runId)}`)
+  );
+}
+
+export async function getDefektaCandidates(runId, kodeObat) {
+  return apiJson(
+    apiUrl(
+      `/api/forecast/defekta/${encodeURIComponent(runId)}/${encodeURIComponent(kodeObat)}`
+    )
+  );
+}
+
+export async function saveDefektaPilihan(runId, kodeObat, payload) {
+  return apiJson(
+    apiUrl(
+      `/api/forecast/defekta/${encodeURIComponent(runId)}/${encodeURIComponent(kodeObat)}`
+    ),
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function resetDefektaPilihan(runId, kodeObat) {
+  return apiJson(
+    apiUrl(
+      `/api/forecast/defekta/${encodeURIComponent(runId)}/${encodeURIComponent(kodeObat)}`
+    ),
+    { method: 'DELETE' }
   );
 }
