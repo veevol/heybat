@@ -39,6 +39,62 @@ function actorLabel(req) {
   return u.nama || u.email || u.id || 'staf';
 }
 
+const MATCHING_AKTIF = new Set(['menunggu_verifikasi', 'terverifikasi']);
+
+function isSupplierGlobal(inisial, nama) {
+  const blob = `${inisial || ''} ${nama || ''}`.toLowerCase();
+  return blob.includes('global');
+}
+
+function isSupplierSbs(inisial, nama) {
+  const blob = `${inisial || ''} ${nama || ''}`.toLowerCase();
+  return /\bsbs\b/.test(blob) || blob.includes('sbs');
+}
+
+/**
+ * Skor Defekta PBF: harga lebih murah = skor lebih tinggi.
+ * Global qty < 5 → skor rendah; SBS qty_estimasi + qty <= 5 → skor rendah.
+ */
+function scoreDefektaPbf({ harga_dasar, qty, qty_estimasi, inisial, nama }) {
+  const harga = Number(harga_dasar);
+  let skor =
+    Number.isFinite(harga) && harga > 0 ? 1_000_000 / harga : 1;
+
+  const qtyN =
+    qty === null || qty === undefined || qty === '' ? null : Number(qty);
+  const hasQty = qtyN != null && Number.isFinite(qtyN);
+
+  if (isSupplierGlobal(inisial, nama) && hasQty && qtyN < 5) {
+    skor *= 0.05;
+  }
+  if (
+    isSupplierSbs(inisial, nama) &&
+    qty_estimasi === true &&
+    hasQty &&
+    qtyN <= 5
+  ) {
+    skor *= 0.05;
+  }
+
+  return Number(skor.toFixed(6));
+}
+
+async function loadLatestPricelistRow(pbfId, kodePbf) {
+  if (!pbfId || !kodePbf) return null;
+  const { data, error } = await supabase
+    .from('pricelist')
+    .select(
+      'id, pbf_id, kode_pbf, nama_barang, satuan, qty, qty_estimasi, harga_dasar, tanggal_upload'
+    )
+    .eq('pbf_id', pbfId)
+    .eq('kode_pbf', kodePbf)
+    .order('tanggal_upload', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 async function getOrCreatePengaturan() {
   const { data, error } = await supabase
     .from('forecast_pengaturan')
@@ -113,7 +169,7 @@ router.put('/pengaturan', requireOwner, async (req, res) => {
 
 /**
  * POST /api/forecast/jalankan
- * Body: { periode_forecast_hari, kategori_penjualan: string[] }
+ * Body: { periode_forecast_hari, kategori_penjualan: string[], periode_histori_hari?: number }
  */
 router.post(
   '/jalankan',
@@ -150,7 +206,16 @@ router.post(
       const kategoriQuery = expandKategoriUntukQuery(kategori);
 
       const pengaturan = await getOrCreatePengaturan();
-      const periodeHistori = Number(pengaturan.periode_histori_hari) || 90;
+      let periodeHistori = Number(pengaturan.periode_histori_hari) || 90;
+      if (req.body?.periode_histori_hari != null && req.body?.periode_histori_hari !== '') {
+        const nHist = Number(req.body.periode_histori_hari);
+        if (!Number.isFinite(nHist) || nHist <= 0 || !Number.isInteger(nHist)) {
+          return res
+            .status(400)
+            .json({ error: 'periode_histori_hari harus bilangan bulat > 0' });
+        }
+        periodeHistori = nHist;
+      }
 
       const since = new Date();
       since.setDate(since.getDate() - periodeHistori);
@@ -225,6 +290,23 @@ router.post(
       }
 
       await insertHasilBatches(hasilRows);
+
+      if (periodeHistori !== Number(pengaturan.periode_histori_hari)) {
+        const { error: updPengaturanErr } = await supabase
+          .from('forecast_pengaturan')
+          .update({
+            periode_histori_hari: periodeHistori,
+            diubah_oleh: actorLabel(req),
+            diubah_saat: new Date().toISOString(),
+          })
+          .eq('id', pengaturan.id);
+        if (updPengaturanErr) {
+          console.error(
+            '[forecast/jalankan] gagal update pengaturan default',
+            updPengaturanErr
+          );
+        }
+      }
 
       res.json({
         forecast_run_id: run.id,
@@ -390,6 +472,182 @@ router.get(
     } catch (err) {
       console.error('[forecast/hasil]', err);
       res.status(500).json({ error: err.message || 'Gagal memuat hasil' });
+    }
+  }
+);
+
+/**
+ * GET /api/forecast/defekta/:runId/:kodeObat
+ * Kandidat PBF + skor + pilihan tersimpan.
+ */
+router.get(
+  '/defekta/:runId/:kodeObat',
+  requireMenuAksi('forecasting', 'lihat'),
+  async (req, res) => {
+    try {
+      const runId = String(req.params.runId || '').trim();
+      const kodeObat = decodeURIComponent(String(req.params.kodeObat || '').trim());
+      if (!runId || !kodeObat) {
+        return res.status(400).json({ error: 'runId dan kodeObat wajib' });
+      }
+
+      const { data: hasil, error: hasilErr } = await supabase
+        .from('forecast_hasil')
+        .select(
+          'id, kode_obat, rata_rata_harian, perkiraan_terjual, stok_sekarang, kebutuhan_beli, grup_substitusi'
+        )
+        .eq('forecast_run_id', runId)
+        .eq('kode_obat', kodeObat)
+        .maybeSingle();
+      if (hasilErr) throw hasilErr;
+      if (!hasil) {
+        return res.status(404).json({ error: 'Hasil forecast obat tidak ditemukan' });
+      }
+
+      const { data: matches, error: matchErr } = await supabase
+        .from('matching')
+        .select(
+          `id, kode_obat_yelo, pricelist_pbf_id, pricelist_kode_pbf, status,
+           supplier:supplier ( id, nama, inisial )`
+        )
+        .eq('kode_obat_yelo', kodeObat)
+        .in('status', [...MATCHING_AKTIF]);
+      if (matchErr) throw matchErr;
+
+      const bySupplier = new Map();
+      for (const m of matches || []) {
+        const sid = m.pricelist_pbf_id || m.supplier?.id;
+        if (!sid) continue;
+        if (bySupplier.has(sid)) continue;
+        const price = await loadLatestPricelistRow(
+          m.pricelist_pbf_id,
+          m.pricelist_kode_pbf
+        );
+        const inisial = m.supplier?.inisial || null;
+        const nama = m.supplier?.nama || null;
+        const skor = scoreDefektaPbf({
+          harga_dasar: price?.harga_dasar,
+          qty: price?.qty,
+          qty_estimasi: price?.qty_estimasi,
+          inisial,
+          nama,
+        });
+        bySupplier.set(sid, {
+          supplier_id: sid,
+          inisial,
+          nama,
+          matching_id: m.id,
+          pricelist_kode_pbf: m.pricelist_kode_pbf || null,
+          qty: price?.qty ?? null,
+          qty_estimasi: price?.qty_estimasi === true,
+          satuan: price?.satuan || null,
+          harga_dasar: price?.harga_dasar ?? null,
+          skor,
+        });
+      }
+
+      const candidates = [...bySupplier.values()].sort(
+        (a, b) => (b.skor || 0) - (a.skor || 0)
+      );
+      const recommended_supplier_id = candidates[0]?.supplier_id || null;
+
+      const { data: pilihan, error: pilErr } = await supabase
+        .from('defekta_pilihan_pbf')
+        .select(
+          'id, kode_obat, supplier_id, pricelist_kode_pbf, forecast_run_id, dipilih_oleh, tanggal_pilih'
+        )
+        .eq('forecast_run_id', runId)
+        .eq('kode_obat', kodeObat)
+        .maybeSingle();
+      if (pilErr) throw pilErr;
+
+      res.json({
+        obat_hasil: hasil,
+        candidates,
+        recommended_supplier_id,
+        pilihan: pilihan || null,
+        selected_supplier_id:
+          pilihan?.supplier_id || recommended_supplier_id || null,
+      });
+    } catch (err) {
+      console.error('[forecast/defekta GET]', err);
+      res.status(500).json({ error: err.message || 'Gagal memuat Defekta' });
+    }
+  }
+);
+
+/**
+ * PUT /api/forecast/defekta/:runId/:kodeObat
+ * Body: { supplier_id, pricelist_kode_pbf? }
+ */
+router.put(
+  '/defekta/:runId/:kodeObat',
+  requireMenuAksi('forecasting', 'lihat'),
+  async (req, res) => {
+    try {
+      const runId = String(req.params.runId || '').trim();
+      const kodeObat = decodeURIComponent(String(req.params.kodeObat || '').trim());
+      const supplierId = String(req.body?.supplier_id || '').trim();
+      const kodePbf = req.body?.pricelist_kode_pbf
+        ? String(req.body.pricelist_kode_pbf).trim()
+        : null;
+
+      if (!runId || !kodeObat || !supplierId) {
+        return res
+          .status(400)
+          .json({ error: 'runId, kodeObat, dan supplier_id wajib' });
+      }
+
+      const { data, error } = await supabase
+        .from('defekta_pilihan_pbf')
+        .upsert(
+          {
+            forecast_run_id: runId,
+            kode_obat: kodeObat,
+            supplier_id: supplierId,
+            pricelist_kode_pbf: kodePbf,
+            dipilih_oleh: actorLabel(req),
+            tanggal_pilih: new Date().toISOString(),
+          },
+          { onConflict: 'forecast_run_id,kode_obat' }
+        )
+        .select(
+          'id, kode_obat, supplier_id, pricelist_kode_pbf, forecast_run_id, dipilih_oleh, tanggal_pilih'
+        )
+        .single();
+      if (error) throw error;
+      res.json(data);
+    } catch (err) {
+      console.error('[forecast/defekta PUT]', err);
+      res.status(500).json({ error: err.message || 'Gagal menyimpan Defekta' });
+    }
+  }
+);
+
+/**
+ * DELETE /api/forecast/defekta/:runId/:kodeObat
+ * Hapus pilihan tersimpan (kembali ke rekomendasi default di UI).
+ */
+router.delete(
+  '/defekta/:runId/:kodeObat',
+  requireMenuAksi('forecasting', 'lihat'),
+  async (req, res) => {
+    try {
+      const runId = String(req.params.runId || '').trim();
+      const kodeObat = decodeURIComponent(String(req.params.kodeObat || '').trim());
+      if (!runId || !kodeObat) {
+        return res.status(400).json({ error: 'runId dan kodeObat wajib' });
+      }
+      const { error } = await supabase
+        .from('defekta_pilihan_pbf')
+        .delete()
+        .eq('forecast_run_id', runId)
+        .eq('kode_obat', kodeObat);
+      if (error) throw error;
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('[forecast/defekta DELETE]', err);
+      res.status(500).json({ error: err.message || 'Gagal reset Defekta' });
     }
   }
 );
