@@ -12,6 +12,7 @@ import MatchingBelumPage from './pages/MatchingBelumPage';
 import MatchingPage from './pages/MatchingPage';
 import MatchingVerifikasiPage from './pages/MatchingVerifikasiPage';
 import MenungguPersetujuanPage from './pages/MenungguPersetujuanPage';
+import PembuatanSpPage from './pages/PembuatanSpPage';
 import PenjualanPage from './pages/PenjualanPage';
 import PlaceholderPage from './pages/PlaceholderPage';
 import PricelistPbfPage from './pages/PricelistPbfPage';
@@ -76,6 +77,7 @@ export default function App() {
               }
             >
               <Route path="/forecasting" element={<ForecastingPage />} />
+              <Route path="/pembuatan-sp/:runId" element={<PembuatanSpPage />} />
             </Route>
             <Route
               path="/akun"

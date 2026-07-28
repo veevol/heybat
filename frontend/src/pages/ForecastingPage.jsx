@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MoreVertical, SlidersHorizontal } from 'lucide-react';
 import {
   getDefektaCandidates,
@@ -30,6 +30,7 @@ import {
   ForecastGrupCard,
   ForecastObatCard,
 } from '../components/ForecastCards';
+import ForecastActionsSheet from '../components/ForecastActionsSheet';
 import ForecastMenuSheet from '../components/ForecastMenuSheet';
 import FilterSortSearchSheet, {
   emptyFilterSection,
@@ -147,6 +148,7 @@ export default function ForecastingPage() {
   const canTambah = hasAccess('forecasting', 'tambah');
   const canEditObat = hasAccess('data-obat-yelo', 'edit');
   const canHapusObat = hasAccess('data-obat-yelo', 'hapus');
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const runIdParam = searchParams.get('run');
@@ -159,7 +161,8 @@ export default function ForecastingPage() {
     toastTimer.current = setTimeout(() => setToast(''), 3200);
   }, []);
 
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [hitungOpen, setHitungOpen] = useState(false);
   const [periodeForecast, setPeriodeForecast] = useState(14);
   const [periodeHistoriHitung, setPeriodeHistoriHitung] = useState(90);
   const [kategori, setKategori] = useState(['retail', 'mitra']);
@@ -499,11 +502,25 @@ export default function ForecastingPage() {
     });
   }
 
-  async function openMenu() {
-    setMenuOpen(true);
+  function openActionsMenu() {
+    setActionsOpen(true);
+  }
+
+  async function openHitungSheet() {
+    setActionsOpen(false);
+    setHitungOpen(true);
     loadRiwayat();
     if (!pengaturan) await loadPengaturan();
     else setPeriodeHistoriHitung(pengaturan.periode_histori_hari ?? 90);
+  }
+
+  function openPembuatanSp() {
+    if (!runIdParam) {
+      showToast('Pilih / buka 1 forecast run dulu sebelum Pembuatan SP');
+      return;
+    }
+    setActionsOpen(false);
+    navigate(`/pembuatan-sp/${runIdParam}`);
   }
 
   async function handleJalankan(e) {
@@ -542,7 +559,7 @@ export default function ForecastingPage() {
       showToast(
         `Selesai: ${result.ringkasan?.perlu_beli ?? 0} obat perlu beli dari ${result.ringkasan?.total_obat ?? 0}`
       );
-      setMenuOpen(false);
+      setHitungOpen(false);
       await loadRiwayat();
       setSearchParams({ run: runId });
     } catch (err) {
@@ -553,7 +570,7 @@ export default function ForecastingPage() {
   }
 
   function openRun(runId) {
-    setMenuOpen(false);
+    setHitungOpen(false);
     setSearchParams({ run: runId });
   }
 
@@ -924,7 +941,7 @@ export default function ForecastingPage() {
           </button>
           <button
             type="button"
-            onClick={openMenu}
+            onClick={openActionsMenu}
             className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary hover:bg-bg-surface-hover hover:text-accent-yellow"
             aria-label="Menu forecasting"
           >
@@ -1029,9 +1046,17 @@ export default function ForecastingPage() {
         )}
       </div>
 
+      <ForecastActionsSheet
+        open={actionsOpen}
+        onClose={() => setActionsOpen(false)}
+        onHitungForecasting={openHitungSheet}
+        onPembuatanSp={openPembuatanSp}
+        canPembuatanSp={Boolean(runIdParam)}
+      />
+
       <ForecastMenuSheet
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
+        open={hitungOpen}
+        onClose={() => setHitungOpen(false)}
         riwayat={riwayat}
         riwayatLoading={riwayatLoading}
         activeRunId={runIdParam}

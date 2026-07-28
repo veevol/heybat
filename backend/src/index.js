@@ -11,6 +11,7 @@ const matchingRouter = require('./routes/matching');
 const penjualanRouter = require('./routes/penjualan');
 const stokRouter = require('./routes/stok');
 const forecastRouter = require('./routes/forecast');
+const dokumenSpRouter = require('./routes/dokumenSp');
 const meRouter = require('./routes/me');
 const kelolaAksesRouter = require('./routes/kelolaAkses');
 
@@ -74,6 +75,7 @@ app.use('/api/matching', matchingRouter);
 app.use('/api/penjualan', penjualanRouter);
 app.use('/api/stok', stokRouter);
 app.use('/api/forecast', forecastRouter);
+app.use('/api/dokumen-sp', dokumenSpRouter);
 
 app.use((err, _req, res, _next) => {
   console.error('[unhandled]', err);

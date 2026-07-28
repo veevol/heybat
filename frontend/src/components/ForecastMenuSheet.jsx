@@ -33,7 +33,8 @@ function FormRow({ label, children }) {
 }
 
 /**
- * Menu titik tiga Forecasting — Riwayat + Hitung (gaya Filter sheet).
+ * Sheet Hitung Forecasting — Riwayat + form Forecast Baru (gaya Filter sheet).
+ * Dibuka dari pilihan "Hitung Forecasting" di menu pendek titik tiga.
  */
 export default function ForecastMenuSheet({
   open,
@@ -58,7 +59,7 @@ export default function ForecastMenuSheet({
     <SheetModal
       title={
         <h2 className="text-[15px] font-semibold leading-none text-text-primary">
-          Menu Forecasting
+          Hitung Forecasting
         </h2>
       }
       onClose={() => {
