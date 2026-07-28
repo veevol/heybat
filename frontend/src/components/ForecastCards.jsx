@@ -68,9 +68,30 @@ function supplierPillLabel(s) {
 }
 
 const pillBase =
-  'shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none';
-const pillNormal = `${pillBase} bg-bg-surface-hover text-white`;
-const pillActive = `${pillBase} bg-accent-yellow/20 text-accent-yellow`;
+  'relative shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold leading-none';
+
+/**
+ * Badge PBF 3-status:
+ * - match saja → abu
+ * - terpilih bobot → aksen kuning
+ * - disetujui → aksen cyan (biru terang)
+ * - kuning+cyan bisa bareng (border kuning + fill cyan)
+ */
+function pbfBadgeClass({ is_terpilih_bobot, is_disetujui }) {
+  if (is_terpilih_bobot && is_disetujui) {
+    return `${pillBase} border border-accent-yellow bg-accent-cyan/25 text-accent-cyan`;
+  }
+  if (is_disetujui) {
+    return `${pillBase} border border-accent-cyan/50 bg-accent-cyan/20 text-accent-cyan`;
+  }
+  if (is_terpilih_bobot) {
+    return `${pillBase} border border-accent-yellow/60 bg-accent-yellow/20 text-accent-yellow`;
+  }
+  return `${pillBase} border border-transparent bg-bg-surface-hover text-white`;
+}
+
+const pillNormal = `${pillBase} border border-transparent bg-bg-surface-hover text-white`;
+const pillActive = `${pillBase} border border-accent-yellow/60 bg-accent-yellow/20 text-accent-yellow`;
 
 /**
  * Card 1 obat forecast — Section 1/2/3.
@@ -86,13 +107,26 @@ export function ForecastObatCard({
   const golonganLabel = golonganInisial(golonganNama);
   const stokProyeksi = `Stok ${formatQtyDenganSatuan(obat.stok_sekarang, obat)} · Proyeksi ${formatQtyDenganSatuan(obat.perkiraan_terjual, obat)}`;
   const kemasan = infoKemasanLabel(obat);
-  const pills = (suppliers || [])
-    .map((s) => ({
-      id: s.id,
-      label: supplierPillLabel(s),
-      active: Boolean(activeSupplierId && s.id === activeSupplierId),
-    }))
-    .filter((p) => p.label);
+
+  const badges =
+    Array.isArray(obat?.pbf_badges) && obat.pbf_badges.length > 0
+      ? obat.pbf_badges
+          .map((b) => ({
+            id: b.supplier_id,
+            label: b.inisial || b.nama || '',
+            className: pbfBadgeClass(b),
+          }))
+          .filter((p) => p.label)
+      : (suppliers || [])
+          .map((s) => ({
+            id: s.id,
+            label: supplierPillLabel(s),
+            className:
+              activeSupplierId && s.id === activeSupplierId
+                ? pillActive
+                : pillNormal,
+          }))
+          .filter((p) => p.label);
 
   return (
     <article className="overflow-hidden rounded-[4px] border border-bg-surface bg-bg-surface shadow-sm shadow-black/10">
@@ -153,7 +187,7 @@ export function ForecastObatCard({
         </span>
       </button>
 
-      {/* Section 3 — kemasan + pill supplier */}
+      {/* Section 3 — kemasan + badge PBF */}
       <button
         type="button"
         onClick={() => onOpenDefekta?.(obat)}
@@ -163,11 +197,8 @@ export function ForecastObatCard({
           {kemasan || '\u00a0'}
         </span>
         <div className="flex min-h-[18px] max-w-[65%] flex-wrap items-center justify-end gap-1">
-          {pills.map((p) => (
-            <span
-              key={p.id || p.label}
-              className={p.active ? pillActive : pillNormal}
-            >
+          {badges.map((p) => (
+            <span key={p.id || p.label} className={p.className}>
               {p.label}
             </span>
           ))}

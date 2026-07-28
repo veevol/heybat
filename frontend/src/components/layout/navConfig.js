@@ -1,21 +1,19 @@
 import {
-  FileSpreadsheet,
-  GitCompareArrows,
-  LayoutGrid,
+  Building2,
   LineChart,
-  Package,
+  Link2,
   Pill,
   Plus,
-  ShoppingCart,
-  UserRound,
+  Tags,
+  TrendingUp,
+  UserCircle,
+  Warehouse,
 } from 'lucide-react';
 
 /**
- * Primary bottom-nav items (expandable pill).
+ * Primary nav items (TopBar logo dropdown).
  * Add new modules here as the app grows.
- *
- * If more than 5 items, the pill keeps a fixed width and
- * scrolls the icons horizontally (see BottomNav).
+ * Icons: lucide outline set with similar visual weight.
  */
 export const PRIMARY_NAV_ITEMS = [
   {
@@ -24,7 +22,7 @@ export const PRIMARY_NAV_ITEMS = [
     to: '/data-supplier',
     menuKode: 'data-supplier',
     match: (pathname) => pathname.startsWith('/data-supplier'),
-    icon: LayoutGrid,
+    icon: Building2,
     type: 'link',
   },
   {
@@ -33,7 +31,7 @@ export const PRIMARY_NAV_ITEMS = [
     to: '/pricelist-pbf',
     menuKode: 'pricelist-pbf',
     match: (pathname) => pathname.startsWith('/pricelist-pbf'),
-    icon: FileSpreadsheet,
+    icon: Tags,
     type: 'link',
   },
   {
@@ -51,7 +49,7 @@ export const PRIMARY_NAV_ITEMS = [
     to: '/matching',
     menuKode: 'matching',
     match: (pathname) => pathname.startsWith('/matching'),
-    icon: GitCompareArrows,
+    icon: Link2,
     type: 'link',
   },
   {
@@ -60,7 +58,7 @@ export const PRIMARY_NAV_ITEMS = [
     to: '/penjualan',
     menuKode: 'penjualan',
     match: (pathname) => pathname.startsWith('/penjualan'),
-    icon: ShoppingCart,
+    icon: TrendingUp,
     type: 'link',
   },
   {
@@ -69,7 +67,7 @@ export const PRIMARY_NAV_ITEMS = [
     to: '/stok',
     menuKode: 'stok',
     match: (pathname) => pathname.startsWith('/stok'),
-    icon: Package,
+    icon: Warehouse,
     type: 'link',
   },
   {
@@ -89,14 +87,14 @@ export const PRIMARY_NAV_ITEMS = [
       pathname.startsWith('/akun') ||
       pathname.startsWith('/pengaturan') ||
       pathname.startsWith('/kelola-akses'),
-    icon: UserRound,
+    icon: UserCircle,
     type: 'akun-sheet',
   },
 ];
 
 /**
- * Optional page-level action slot (replaces the old floating FAB).
- * Declared here so BottomNav knows WHEN to show "+", while the page
+ * Optional page-level action slot (shown at bottom of nav dropdown).
+ * Declared here so TopBar knows WHEN to show "+", while the page
  * supplies the onClick handler via AppShell `pageAction`.
  *
  * Only one slot can match a given path.

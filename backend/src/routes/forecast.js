@@ -223,6 +223,167 @@ async function buildDefektaScoresByKode(kodeList) {
   return { byKode };
 }
 
+/**
+ * Sumber kebenaran is_disetujui: baris di defekta_pilihan_pbf untuk run.
+ * Dipakai bersama oleh GET hasil (badge) dan GET defekta-filter (pill).
+ * @returns {Promise<{
+ *   pilihanRows: Array<object>,
+ *   pilihanListByKode: Map<string, Array<object>>,
+ * }>}
+ */
+async function loadDefektaPilihanForRun(runId) {
+  const pilihanRows = await fetchAllRows(() =>
+    supabase
+      .from('defekta_pilihan_pbf')
+      .select('kode_obat, supplier_id, pricelist_kode_pbf, qty_order')
+      .eq('forecast_run_id', runId)
+  );
+
+  /** @type {Map<string, Array<object>>} */
+  const pilihanListByKode = new Map();
+  for (const p of pilihanRows) {
+    if (!p.kode_obat) continue;
+    let list = pilihanListByKode.get(p.kode_obat);
+    if (!list) {
+      list = [];
+      pilihanListByKode.set(p.kode_obat, list);
+    }
+    list.push(p);
+  }
+  return { pilihanRows, pilihanListByKode };
+}
+
+/**
+ * Badge PBF per obat — sama dengan kontrak Tahap 2.
+ * is_disetujui = ada baris pilihan untuk supplier itu.
+ */
+function buildPbfBadges(candidates, recommendedSupplierId, pilihanList) {
+  const disetujuiIds = new Set(
+    (pilihanList || []).map((p) => p.supplier_id).filter(Boolean)
+  );
+  return (candidates || []).map((c) => ({
+    supplier_id: c.supplier_id,
+    inisial: c.inisial || null,
+    nama: c.nama || null,
+    is_match: true,
+    is_terpilih_bobot: c.supplier_id === recommendedSupplierId,
+    is_disetujui: disetujuiIds.has(c.supplier_id),
+  }));
+}
+
+/**
+ * Ringkasan pill filter dari hasil run + pilihan (sumber is_disetujui yang sama).
+ * Multi-PBF: 1 obat disetujui ke N PBF → +1 di tiap PBF itu.
+ */
+function buildDefektaFilterRingkasan(hasilKodeList, pilihanRows, supplierById) {
+  const kodeSet = new Set((hasilKodeList || []).filter(Boolean));
+  const total_semua = kodeSet.size;
+
+  const kodeDenganPilihan = new Set();
+  /** @type {Map<string, Set<string>>} supplier_id → set kode_obat */
+  const obatPerSupplier = new Map();
+
+  for (const p of pilihanRows || []) {
+    if (!p?.kode_obat || !p?.supplier_id) continue;
+    if (!kodeSet.has(p.kode_obat)) continue; // hanya obat yang ada di hasil run
+    kodeDenganPilihan.add(p.kode_obat);
+    let set = obatPerSupplier.get(p.supplier_id);
+    if (!set) {
+      set = new Set();
+      obatPerSupplier.set(p.supplier_id, set);
+    }
+    set.add(p.kode_obat);
+  }
+
+  const pbf_terpilih = [];
+  for (const [supplierId, kodeObatSet] of obatPerSupplier) {
+    const jumlah = kodeObatSet.size;
+    if (jumlah <= 0) continue;
+    const s = supplierById?.get(supplierId) || null;
+    pbf_terpilih.push({
+      supplier_id: supplierId,
+      inisial: s?.inisial || null,
+      nama: s?.nama || null,
+      jumlah_obat: jumlah,
+    });
+  }
+
+  pbf_terpilih.sort((a, b) => {
+    if (b.jumlah_obat !== a.jumlah_obat) return b.jumlah_obat - a.jumlah_obat;
+    return String(a.inisial || a.nama || '').localeCompare(
+      String(b.inisial || b.nama || ''),
+      'id',
+      { sensitivity: 'base' }
+    );
+  });
+
+  return {
+    total_semua,
+    total_belum_dipilih: total_semua - kodeDenganPilihan.size,
+    pbf_terpilih,
+  };
+}
+
+/**
+ * Obat hasil run yang belum punya baris Defekta apapun.
+ * Sama definisi dengan total_belum_dipilih di buildDefektaFilterRingkasan.
+ * @param {Array<{ kode_obat: string, kebutuhan_beli?: * }>} hasilRows
+ * @param {Map<string, Array<object>>} pilihanListByKode
+ */
+function listObatBelumDipilih(hasilRows, pilihanListByKode) {
+  const seen = new Set();
+  const out = [];
+  for (const row of hasilRows || []) {
+    const kode = row?.kode_obat;
+    if (!kode || seen.has(kode)) continue;
+    seen.add(kode);
+    if (pilihanListByKode?.has(kode)) continue;
+    out.push(row);
+  }
+  return out;
+}
+
+async function upsertDefektaPilihanBatches(rows, batchSize = 200) {
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const { error } = await supabase.from('defekta_pilihan_pbf').upsert(chunk, {
+      onConflict: 'forecast_run_id,kode_obat,supplier_id',
+    });
+    if (error) throw error;
+  }
+}
+
+/**
+ * Qty order Defekta dari kebutuhan_beli (satuan_1):
+ * - konversi > 1 → CEIL(kebutuhan / konversi) dalam satuan_2
+ * - selain itu → CEIL(kebutuhan) dalam satuan_1
+ * @returns {number|null}
+ */
+function computeQtyOrderDefekta(kebutuhanBeli, konversi) {
+  const kebutuhan = Number(kebutuhanBeli);
+  if (!Number.isFinite(kebutuhan) || kebutuhan < 0) return null;
+  const konv = Number(konversi);
+  if (Number.isFinite(konv) && konv > 1) {
+    return Math.ceil(kebutuhan / konv);
+  }
+  return Math.ceil(kebutuhan);
+}
+
+/**
+ * Label satuan untuk qty_order: satuan_2 jika konversi > 1 & ada nama, else satuan_1.
+ */
+function qtyOrderSatuanLabel({ konversi, satuan_1, satuan_2 }) {
+  const konv = Number(konversi);
+  const sat2 =
+    (satuan_2 && typeof satuan_2 === 'object' ? satuan_2.nama : satuan_2) ||
+    null;
+  const sat1 =
+    (satuan_1 && typeof satuan_1 === 'object' ? satuan_1.nama : satuan_1) ||
+    null;
+  if (Number.isFinite(konv) && konv > 1 && sat2) return sat2;
+  return sat1 || null;
+}
+
 async function getOrCreatePengaturan() {
   const { data, error } = await supabase
     .from('forecast_pengaturan')
@@ -528,20 +689,10 @@ router.get(
       }
 
       const kodeAll = hasilRows.map((r) => r.kode_obat).filter(Boolean);
-      const [{ byKode: skorByKode }, pilihanRows] = await Promise.all([
+      const [{ byKode: skorByKode }, { pilihanListByKode }] = await Promise.all([
         buildDefektaScoresByKode(kodeAll),
-        fetchAllRows(() =>
-          supabase
-            .from('defekta_pilihan_pbf')
-            .select('kode_obat, supplier_id, pricelist_kode_pbf')
-            .eq('forecast_run_id', runId)
-        ),
+        loadDefektaPilihanForRun(runId),
       ]);
-
-      const pilihanByKode = new Map();
-      for (const p of pilihanRows) {
-        if (p.kode_obat) pilihanByKode.set(p.kode_obat, p);
-      }
 
       const grupMap = new Map();
       for (const row of hasilRows) {
@@ -569,14 +720,21 @@ router.get(
 
         const candidates = skorByKode.get(row.kode_obat) || [];
         const recommended_supplier_id = candidates[0]?.supplier_id || null;
-        const pilihan = pilihanByKode.get(row.kode_obat) || null;
-        const pilihan_tersimpan = Boolean(pilihan?.supplier_id);
-        // Default tersirat = skor tertinggi; override hanya jika user sudah Save.
-        // Yellow di card hanya untuk obat yang perlu beli.
+        const pilihanList = pilihanListByKode.get(row.kode_obat) || [];
+        const pilihan_tersimpan = pilihanList.length > 0;
+        const pbf_badges = buildPbfBadges(
+          candidates,
+          recommended_supplier_id,
+          pilihanList
+        );
+
+        // Compat: active = pemenang bobot jika perlu beli; atau PBF disetujui pertama.
         let active_supplier_id = null;
         if (kebutuhan > 0) {
           active_supplier_id =
-            pilihan?.supplier_id || recommended_supplier_id || null;
+            recommended_supplier_id ||
+            pilihanList[0]?.supplier_id ||
+            null;
         }
 
         slot.obat.push({
@@ -594,6 +752,15 @@ router.get(
           recommended_supplier_id,
           active_supplier_id,
           pilihan_tersimpan,
+          pbf_badges,
+          pilihan_disetujui: pilihanList.map((p) => ({
+            supplier_id: p.supplier_id,
+            pricelist_kode_pbf: p.pricelist_kode_pbf || null,
+            qty_order:
+              p.qty_order === null || p.qty_order === undefined
+                ? null
+                : Number(p.qty_order),
+          })),
         });
       }
 
@@ -657,8 +824,185 @@ router.get(
 );
 
 /**
+ * GET /api/forecast/defekta-filter/:runId
+ * Ringkasan pill filter Defekta (Semua / Belum Dipilih / per-PBF disetujui).
+ * is_disetujui memakai sumber yang sama dengan GET hasil (defekta_pilihan_pbf).
+ */
+router.get(
+  '/defekta-filter/:runId',
+  requireMenuAksi('forecasting', 'lihat'),
+  async (req, res) => {
+    try {
+      const runId = String(req.params.runId || '').trim();
+      if (!runId) {
+        return res.status(400).json({ error: 'runId wajib' });
+      }
+
+      const { data: run, error: runErr } = await supabase
+        .from('forecast_run')
+        .select('id')
+        .eq('id', runId)
+        .maybeSingle();
+      if (runErr) throw runErr;
+      if (!run) {
+        return res.status(404).json({ error: 'Forecast run tidak ditemukan' });
+      }
+
+      const [hasilRows, { pilihanRows }] = await Promise.all([
+        fetchAllRows(() =>
+          supabase
+            .from('forecast_hasil')
+            .select('kode_obat')
+            .eq('forecast_run_id', runId)
+        ),
+        loadDefektaPilihanForRun(runId),
+      ]);
+
+      const supplierIds = [
+        ...new Set(
+          (pilihanRows || []).map((p) => p.supplier_id).filter(Boolean)
+        ),
+      ];
+      /** @type {Map<string, { id: string, inisial: *, nama: * }>} */
+      const supplierById = new Map();
+      if (supplierIds.length > 0) {
+        const { data: suppliers, error: supErr } = await supabase
+          .from('supplier')
+          .select('id, nama, inisial')
+          .in('id', supplierIds);
+        if (supErr) throw supErr;
+        for (const s of suppliers || []) {
+          supplierById.set(s.id, s);
+        }
+      }
+
+      const ringkasan = buildDefektaFilterRingkasan(
+        hasilRows.map((r) => r.kode_obat),
+        pilihanRows,
+        supplierById
+      );
+
+      res.json({
+        forecast_run_id: runId,
+        ...ringkasan,
+      });
+    } catch (err) {
+      console.error('[forecast/defekta-filter]', err);
+      res
+        .status(500)
+        .json({ error: err.message || 'Gagal memuat filter Defekta' });
+    }
+  }
+);
+
+/**
+ * POST /api/forecast/defekta-filter/:runId/setujui-semua
+ * Setujui PBF pemenang bobot untuk semua obat yang belum punya pilihan.
+ * Idempotent: upsert; panggilan ulang aman (obat yang sudah punya baris dilewati).
+ */
+router.post(
+  '/defekta-filter/:runId/setujui-semua',
+  requireMenuAksi('forecasting', 'lihat'),
+  async (req, res) => {
+    try {
+      const runId = String(req.params.runId || '').trim();
+      if (!runId) {
+        return res.status(400).json({ error: 'runId wajib' });
+      }
+
+      const { data: run, error: runErr } = await supabase
+        .from('forecast_run')
+        .select('id')
+        .eq('id', runId)
+        .maybeSingle();
+      if (runErr) throw runErr;
+      if (!run) {
+        return res.status(404).json({ error: 'Forecast run tidak ditemukan' });
+      }
+
+      const [hasilRows, { pilihanListByKode }] = await Promise.all([
+        fetchAllRows(() =>
+          supabase
+            .from('forecast_hasil')
+            .select('kode_obat, kebutuhan_beli')
+            .eq('forecast_run_id', runId)
+        ),
+        loadDefektaPilihanForRun(runId),
+      ]);
+
+      const belumDipilih = listObatBelumDipilih(hasilRows, pilihanListByKode);
+      const kodeBelum = belumDipilih.map((r) => r.kode_obat).filter(Boolean);
+      const [{ byKode }, obatKonversiRows] = await Promise.all([
+        buildDefektaScoresByKode(kodeBelum),
+        (async () => {
+          const all = [];
+          for (let i = 0; i < kodeBelum.length; i += 150) {
+            const chunk = kodeBelum.slice(i, i + 150);
+            const rows = await fetchAllRows(() =>
+              supabase
+                .from('obat_yelo')
+                .select('kode_obat, konversi')
+                .in('kode_obat', chunk)
+            );
+            all.push(...rows);
+          }
+          return all;
+        })(),
+      ]);
+
+      /** @type {Map<string, number|null>} */
+      const konversiByKode = new Map();
+      for (const o of obatKonversiRows) {
+        if (o.kode_obat) konversiByKode.set(o.kode_obat, o.konversi);
+      }
+
+      const actor = actorLabel(req);
+      const nowIso = new Date().toISOString();
+      const toUpsert = [];
+      let jumlah_dilewati = 0;
+
+      for (const row of belumDipilih) {
+        const candidates = byKode.get(row.kode_obat) || [];
+        // Pemenang bobot = candidates[0] (sudah sort DESC) — sama is_terpilih_bobot
+        const winner = candidates[0] || null;
+        if (!winner?.supplier_id) {
+          jumlah_dilewati += 1;
+          continue;
+        }
+        const qtyOrder = computeQtyOrderDefekta(
+          row.kebutuhan_beli,
+          konversiByKode.get(row.kode_obat)
+        );
+        toUpsert.push({
+          forecast_run_id: runId,
+          kode_obat: row.kode_obat,
+          supplier_id: winner.supplier_id,
+          pricelist_kode_pbf: winner.pricelist_kode_pbf || null,
+          qty_order: qtyOrder,
+          dipilih_oleh: actor,
+          tanggal_pilih: nowIso,
+        });
+      }
+
+      await upsertDefektaPilihanBatches(toUpsert);
+
+      res.json({
+        jumlah_disetujui: toUpsert.length,
+        jumlah_dilewati,
+        jumlah_obat_diproses: belumDipilih.length,
+      });
+    } catch (err) {
+      console.error('[forecast/defekta setujui-semua]', err);
+      res
+        .status(500)
+        .json({ error: err.message || 'Gagal Setujui Semua Defekta' });
+    }
+  }
+);
+
+/**
  * GET /api/forecast/defekta/:runId/:kodeObat
- * Kandidat PBF + skor + pilihan tersimpan.
+ * Kandidat PBF + skor + daftar pilihan tersimpan (multi-PBF).
  */
 router.get(
   '/defekta/:runId/:kodeObat',
@@ -683,6 +1027,27 @@ router.get(
       if (!hasil) {
         return res.status(404).json({ error: 'Hasil forecast obat tidak ditemukan' });
       }
+
+      const { data: obatMeta, error: obatErr } = await supabase
+        .from('obat_yelo')
+        .select(
+          `kode_obat, konversi,
+           satuan_1:ref_satuan!obat_yelo_satuan_1_id_fkey ( id, nama ),
+           satuan_2:ref_satuan!obat_yelo_satuan_2_id_fkey ( id, nama )`
+        )
+        .eq('kode_obat', kodeObat)
+        .maybeSingle();
+      if (obatErr) throw obatErr;
+
+      const defaultQty = computeQtyOrderDefekta(
+        hasil.kebutuhan_beli,
+        obatMeta?.konversi
+      );
+      const qtySatuan = qtyOrderSatuanLabel({
+        konversi: obatMeta?.konversi,
+        satuan_1: obatMeta?.satuan_1,
+        satuan_2: obatMeta?.satuan_2,
+      });
 
       const { data: matches, error: matchErr } = await supabase
         .from('matching')
@@ -731,23 +1096,57 @@ router.get(
       );
       const recommended_supplier_id = candidates[0]?.supplier_id || null;
 
-      const { data: pilihan, error: pilErr } = await supabase
+      const { data: pilihanRows, error: pilErr } = await supabase
         .from('defekta_pilihan_pbf')
         .select(
-          'id, kode_obat, supplier_id, pricelist_kode_pbf, forecast_run_id, dipilih_oleh, tanggal_pilih'
+          'id, kode_obat, supplier_id, pricelist_kode_pbf, qty_order, forecast_run_id, dipilih_oleh, tanggal_pilih'
         )
         .eq('forecast_run_id', runId)
-        .eq('kode_obat', kodeObat)
-        .maybeSingle();
+        .eq('kode_obat', kodeObat);
       if (pilErr) throw pilErr;
+
+      const pilihan_list = (pilihanRows || []).map((p) => ({
+        ...p,
+        qty_order:
+          p.qty_order === null || p.qty_order === undefined
+            ? null
+            : Number(p.qty_order),
+      }));
+      const disetujuiIds = new Set(
+        pilihan_list.map((p) => p.supplier_id).filter(Boolean)
+      );
+
+      const candidatesWithFlags = candidates.map((c) => ({
+        ...c,
+        is_match: true,
+        is_terpilih_bobot: c.supplier_id === recommended_supplier_id,
+        is_disetujui: disetujuiIds.has(c.supplier_id),
+        qty_order_tersimpan:
+          pilihan_list.find((p) => p.supplier_id === c.supplier_id)?.qty_order ??
+          null,
+      }));
+
+      // Compat: pilihan = baris pertama (atau pemenang bobot jika ada)
+      const pilihanCompat =
+        pilihan_list.find((p) => p.supplier_id === recommended_supplier_id) ||
+        pilihan_list[0] ||
+        null;
 
       res.json({
         obat_hasil: hasil,
-        candidates,
+        obat_meta: {
+          konversi: obatMeta?.konversi ?? null,
+          satuan_1: obatMeta?.satuan_1 || null,
+          satuan_2: obatMeta?.satuan_2 || null,
+        },
+        candidates: candidatesWithFlags,
         recommended_supplier_id,
-        pilihan: pilihan || null,
+        pilihan_list,
+        pilihan: pilihanCompat,
+        default_qty_order: defaultQty,
+        qty_order_satuan: qtySatuan,
         selected_supplier_id:
-          pilihan?.supplier_id || recommended_supplier_id || null,
+          pilihanCompat?.supplier_id || recommended_supplier_id || null,
       });
     } catch (err) {
       console.error('[forecast/defekta GET]', err);
@@ -758,7 +1157,8 @@ router.get(
 
 /**
  * PUT /api/forecast/defekta/:runId/:kodeObat
- * Body: { supplier_id, pricelist_kode_pbf? }
+ * Body: { supplier_id, pricelist_kode_pbf?, qty_order? }
+ * Upsert 1 baris per (run, obat, supplier) — tidak menghapus PBF lain.
  */
 router.put(
   '/defekta/:runId/:kodeObat',
@@ -778,6 +1178,45 @@ router.put(
           .json({ error: 'runId, kodeObat, dan supplier_id wajib' });
       }
 
+      let qtyOrder = null;
+      if (
+        req.body?.qty_order !== undefined &&
+        req.body?.qty_order !== null &&
+        req.body?.qty_order !== ''
+      ) {
+        const n = Number(req.body.qty_order);
+        if (!Number.isFinite(n) || n < 0) {
+          return res.status(400).json({ error: 'qty_order harus angka >= 0' });
+        }
+        if (!Number.isInteger(n)) {
+          return res
+            .status(400)
+            .json({ error: 'qty_order harus bilangan bulat' });
+        }
+        qtyOrder = n;
+      } else {
+        const [{ data: hasil, error: hasilErr }, { data: obatMeta, error: obatErr }] =
+          await Promise.all([
+            supabase
+              .from('forecast_hasil')
+              .select('kebutuhan_beli')
+              .eq('forecast_run_id', runId)
+              .eq('kode_obat', kodeObat)
+              .maybeSingle(),
+            supabase
+              .from('obat_yelo')
+              .select('konversi')
+              .eq('kode_obat', kodeObat)
+              .maybeSingle(),
+          ]);
+        if (hasilErr) throw hasilErr;
+        if (obatErr) throw obatErr;
+        qtyOrder = computeQtyOrderDefekta(
+          hasil?.kebutuhan_beli,
+          obatMeta?.konversi
+        );
+      }
+
       const { data, error } = await supabase
         .from('defekta_pilihan_pbf')
         .upsert(
@@ -786,17 +1225,24 @@ router.put(
             kode_obat: kodeObat,
             supplier_id: supplierId,
             pricelist_kode_pbf: kodePbf,
+            qty_order: qtyOrder,
             dipilih_oleh: actorLabel(req),
             tanggal_pilih: new Date().toISOString(),
           },
-          { onConflict: 'forecast_run_id,kode_obat' }
+          { onConflict: 'forecast_run_id,kode_obat,supplier_id' }
         )
         .select(
-          'id, kode_obat, supplier_id, pricelist_kode_pbf, forecast_run_id, dipilih_oleh, tanggal_pilih'
+          'id, kode_obat, supplier_id, pricelist_kode_pbf, qty_order, forecast_run_id, dipilih_oleh, tanggal_pilih'
         )
         .single();
       if (error) throw error;
-      res.json(data);
+      res.json({
+        ...data,
+        qty_order:
+          data.qty_order === null || data.qty_order === undefined
+            ? null
+            : Number(data.qty_order),
+      });
     } catch (err) {
       console.error('[forecast/defekta PUT]', err);
       res.status(500).json({ error: err.message || 'Gagal menyimpan Defekta' });
@@ -806,7 +1252,8 @@ router.put(
 
 /**
  * DELETE /api/forecast/defekta/:runId/:kodeObat
- * Hapus pilihan tersimpan (kembali ke rekomendasi default di UI).
+ * Batalkan 1 pilihan: wajib supplier_id (query ?supplier_id=).
+ * Tanpa supplier_id → 400 (multi-PBF; jangan hapus semua secara diam-diam).
  */
 router.delete(
   '/defekta/:runId/:kodeObat',
@@ -815,19 +1262,28 @@ router.delete(
     try {
       const runId = String(req.params.runId || '').trim();
       const kodeObat = decodeURIComponent(String(req.params.kodeObat || '').trim());
+      const supplierId = String(
+        req.query?.supplier_id || req.body?.supplier_id || ''
+      ).trim();
       if (!runId || !kodeObat) {
         return res.status(400).json({ error: 'runId dan kodeObat wajib' });
       }
-      const { error } = await supabase
+      if (!supplierId) {
+        return res.status(400).json({
+          error: 'supplier_id wajib (batalkan 1 pilihan PBF)',
+        });
+      }
+      const { error, count } = await supabase
         .from('defekta_pilihan_pbf')
-        .delete()
+        .delete({ count: 'exact' })
         .eq('forecast_run_id', runId)
-        .eq('kode_obat', kodeObat);
+        .eq('kode_obat', kodeObat)
+        .eq('supplier_id', supplierId);
       if (error) throw error;
-      res.json({ ok: true });
+      res.json({ ok: true, deleted: count ?? null });
     } catch (err) {
       console.error('[forecast/defekta DELETE]', err);
-      res.status(500).json({ error: err.message || 'Gagal reset Defekta' });
+      res.status(500).json({ error: err.message || 'Gagal batalkan Defekta' });
     }
   }
 );

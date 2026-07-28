@@ -1,5 +1,5 @@
-import BottomNav from './BottomNav';
 import TopBar from './TopBar';
+import ScrollFab from './ScrollFab';
 
 /**
  * @param {{
@@ -11,7 +11,7 @@ import TopBar from './TopBar';
  * }} props
  * pageAction: optional "+" (or similar) handler for the current page —
  * slot visibility is declared in navConfig PAGE_ACTION_SLOTS.
- * navLoading: drives morph loader on collapsed Bottom Nav circle.
+ * navLoading: drives morph loader on TopBar logo trigger.
  */
 export default function AppShell({
   title,
@@ -22,10 +22,17 @@ export default function AppShell({
 }) {
   return (
     <div className="min-h-screen bg-bg-base">
-      <TopBar title={title} actions={actions} />
-      {/* Extra bottom padding so content clears the floating nav control */}
-      <main className="mx-auto max-w-6xl px-3 pb-28 pt-1 scrollbar-hide">{children}</main>
-      <BottomNav pageAction={pageAction} navLoading={navLoading} />
+      <TopBar
+        title={title}
+        actions={actions}
+        pageAction={pageAction}
+        navLoading={navLoading}
+      />
+      {/* pb-20: clear the center-bottom ScrollFab */}
+      <main className="mx-auto max-w-6xl px-3 pb-20 pt-1 scrollbar-hide">
+        {children}
+      </main>
+      <ScrollFab />
     </div>
   );
 }

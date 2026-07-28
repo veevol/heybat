@@ -3,12 +3,14 @@ import { useSearchParams } from 'react-router-dom';
 import { MoreVertical, SlidersHorizontal } from 'lucide-react';
 import {
   getDefektaCandidates,
+  getDefektaFilter,
   getForecastHasil,
   getForecastPengaturan,
   jalankanForecast,
   listForecastRiwayat,
   resetDefektaPilihan,
   saveDefektaPilihan,
+  setujuiSemuaDefekta,
 } from '../api/forecast';
 import { getSupplierMapAktif, syncObatSuppliers } from '../api/matching';
 import {
@@ -22,6 +24,7 @@ import { listRef } from '../api/refData';
 import { listSuppliers } from '../api/suppliers';
 import AppShell from '../components/layout/AppShell';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
+import DefektaFilterPills from '../components/DefektaFilterPills';
 import DefektaSheet from '../components/DefektaSheet';
 import {
   ForecastGrupCard,
@@ -38,7 +41,11 @@ import PricelistPickSheet from '../components/PricelistPickSheet';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import { sortGolonganFilterOptions } from '../lib/obatYelo';
+import {
+  computeQtyOrderDefekta,
+  qtyOrderSatuanLabel,
+  sortGolonganFilterOptions,
+} from '../lib/obatYelo';
 
 const KATEGORI_OPTIONS = [
   { value: 'retail', label: 'Retail' },
@@ -121,17 +128,17 @@ function matchesStokFilter(kebutuhan, stokSelected) {
   return false;
 }
 
-function patchObatInHasil(prev, kodeObat, patch) {
-  if (!prev?.grup) return prev;
-  return {
-    ...prev,
-    grup: prev.grup.map((g) => ({
-      ...g,
-      obat: (g.obat || []).map((o) =>
-        o.kode_obat === kodeObat ? { ...o, ...patch } : o
-      ),
-    })),
-  };
+function matchesDefektaPill(obat, defektaPill) {
+  if (!defektaPill || defektaPill === 'semua') return true;
+  const pilihan = obat?.pilihan_disetujui || [];
+  if (defektaPill === 'belum') {
+    return !pilihan.length;
+  }
+  if (defektaPill.startsWith('pbf:')) {
+    const sid = defektaPill.slice(4);
+    return pilihan.some((p) => p.supplier_id === sid);
+  }
+  return true;
 }
 
 export default function ForecastingPage() {
@@ -200,6 +207,12 @@ export default function ForecastingPage() {
   const [defektaCandidates, setDefektaCandidates] = useState([]);
   const [defektaSelectedId, setDefektaSelectedId] = useState(null);
   const [defektaRecommendedId, setDefektaRecommendedId] = useState(null);
+  const [defektaDefaultQty, setDefektaDefaultQty] = useState(null);
+  const [defektaQtySatuan, setDefektaQtySatuan] = useState(null);
+  const [defektaPill, setDefektaPill] = useState('semua');
+  const [defektaFilter, setDefektaFilter] = useState(null);
+  const [defektaFilterLoading, setDefektaFilterLoading] = useState(false);
+  const [setujuiSemuaBusy, setSetujuiSemuaBusy] = useState(false);
 
   const loadRiwayat = useCallback(async () => {
     setRiwayatLoading(true);
@@ -218,7 +231,7 @@ export default function ForecastingPage() {
   const loadHasil = useCallback(async (runId) => {
     if (!runId) {
       setHasil(null);
-      return;
+      return null;
     }
     setHasilLoading(true);
     setHasilError('');
@@ -226,13 +239,45 @@ export default function ForecastingPage() {
       const data = await getForecastHasil(runId);
       setHasil(data);
       setExpanded({});
+      return data;
     } catch (err) {
       setHasil(null);
       setHasilError(err.message || 'Gagal memuat hasil');
+      return null;
     } finally {
       setHasilLoading(false);
     }
   }, []);
+
+  const loadDefektaFilter = useCallback(async (runId) => {
+    if (!runId) {
+      setDefektaFilter(null);
+      return null;
+    }
+    setDefektaFilterLoading(true);
+    try {
+      const data = await getDefektaFilter(runId);
+      setDefektaFilter(data);
+      return data;
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat filter Defekta');
+      return null;
+    } finally {
+      setDefektaFilterLoading(false);
+    }
+  }, [showToast]);
+
+  const refreshDefektaData = useCallback(
+    async (runId) => {
+      if (!runId) return { hasil: null, filter: null };
+      const [hasilData, filterData] = await Promise.all([
+        loadHasil(runId),
+        loadDefektaFilter(runId),
+      ]);
+      return { hasil: hasilData, filter: filterData };
+    },
+    [loadHasil, loadDefektaFilter]
+  );
 
   const loadPengaturan = useCallback(async () => {
     try {
@@ -270,9 +315,23 @@ export default function ForecastingPage() {
 
   useEffect(() => {
     if (runIdParam) {
+      setDefektaPill('semua');
       loadHasil(runIdParam);
+      loadDefektaFilter(runIdParam);
+    } else {
+      setDefektaFilter(null);
     }
-  }, [runIdParam, loadHasil]);
+  }, [runIdParam, loadHasil, loadDefektaFilter]);
+
+  // Kalau pill PBF aktif tapi PBF itu hilang dari ringkasan → kembali ke Semua
+  useEffect(() => {
+    if (!defektaPill.startsWith('pbf:')) return;
+    const sid = defektaPill.slice(4);
+    const stillThere = (defektaFilter?.pbf_terpilih || []).some(
+      (p) => p.supplier_id === sid
+    );
+    if (!stillThere) setDefektaPill('semua');
+  }, [defektaFilter, defektaPill]);
 
   const filterOptions = useMemo(() => {
     const golonganNames = [];
@@ -357,6 +416,10 @@ export default function ForecastingPage() {
           }
         }
 
+        // Layer Defekta pill (Semua / Belum Dipilih / per-PBF)
+        obat = obat.filter((o) => matchesDefektaPill(o, defektaPill));
+        if (obat.length === 0) return null;
+
         const totalKebutuhan = obat.reduce(
           (n, o) => n + (Number(o.kebutuhan_beli) || 0),
           0
@@ -395,7 +458,7 @@ export default function ForecastingPage() {
     }
 
     return { visibleGrup: list, autoExpandNames: autoExpand };
-  }, [hasil, search, filters, sort, supplierMap]);
+  }, [hasil, search, filters, sort, supplierMap, defektaPill]);
 
   const isGrupOpen = (nama) => {
     if (Object.prototype.hasOwnProperty.call(expanded, nama)) {
@@ -694,6 +757,12 @@ export default function ForecastingPage() {
     setDefektaCandidates([]);
     setDefektaSelectedId(null);
     setDefektaRecommendedId(null);
+    setDefektaDefaultQty(
+      obat?.kebutuhan_beli != null
+        ? computeQtyOrderDefekta(obat.kebutuhan_beli, obat)
+        : null
+    );
+    setDefektaQtySatuan(qtyOrderSatuanLabel(obat));
     try {
       const data = await getDefektaCandidates(runIdParam, obat.kode_obat);
       setDefektaCandidates(data.candidates || []);
@@ -701,6 +770,20 @@ export default function ForecastingPage() {
       setDefektaSelectedId(
         data.selected_supplier_id || data.recommended_supplier_id || null
       );
+      if (data.default_qty_order != null) {
+        setDefektaDefaultQty(Number(data.default_qty_order));
+      }
+      if (data.qty_order_satuan) {
+        setDefektaQtySatuan(data.qty_order_satuan);
+      } else if (data.obat_meta) {
+        setDefektaQtySatuan(
+          qtyOrderSatuanLabel({
+            konversi: data.obat_meta.konversi,
+            satuan_1: data.obat_meta.satuan_1,
+            satuan_2: data.obat_meta.satuan_2,
+          })
+        );
+      }
     } catch (err) {
       showToast(err.message || 'Gagal memuat Defekta');
       setDefektaObat(null);
@@ -709,24 +792,27 @@ export default function ForecastingPage() {
     }
   }
 
-  async function handleDefektaSave(supplierId) {
+  async function handleDefektaSave(supplierId, opts = {}) {
     if (!runIdParam || !defektaObat || !supplierId) return;
     const row = defektaCandidates.find((c) => c.supplier_id === supplierId);
     setDefektaSaving(true);
     try {
+      let qtyRaw =
+        opts.qty_order !== undefined
+          ? Number(opts.qty_order)
+          : computeQtyOrderDefekta(defektaObat.kebutuhan_beli, defektaObat);
+      if (Number.isFinite(qtyRaw) && !Number.isInteger(qtyRaw)) {
+        qtyRaw = Math.round(qtyRaw);
+      }
       await saveDefektaPilihan(runIdParam, defektaObat.kode_obat, {
         supplier_id: supplierId,
         pricelist_kode_pbf: row?.pricelist_kode_pbf || null,
+        qty_order: Number.isFinite(qtyRaw) ? qtyRaw : null,
       });
       setDefektaSelectedId(supplierId);
-      setHasil((prev) =>
-        patchObatInHasil(prev, defektaObat.kode_obat, {
-          active_supplier_id: supplierId,
-          pilihan_tersimpan: true,
-        })
-      );
       showToast('Pilihan PBF disimpan');
       setDefektaObat(null);
+      await refreshDefektaData(runIdParam);
     } catch (err) {
       showToast(err.message || 'Gagal menyimpan Defekta');
     } finally {
@@ -734,27 +820,63 @@ export default function ForecastingPage() {
     }
   }
 
-  async function handleDefektaReset() {
-    if (!runIdParam || !defektaObat) return;
+  async function handleDefektaBatalkan(supplierId) {
+    if (!runIdParam || !defektaObat || !supplierId) return;
     setDefektaSaving(true);
     try {
-      await resetDefektaPilihan(runIdParam, defektaObat.kode_obat);
-      const rec = defektaRecommendedId;
-      setDefektaSelectedId(rec);
-      const kebutuhan = Number(defektaObat.kebutuhan_beli) || 0;
-      setHasil((prev) =>
-        patchObatInHasil(prev, defektaObat.kode_obat, {
-          active_supplier_id: kebutuhan > 0 ? rec : null,
-          pilihan_tersimpan: false,
-          recommended_supplier_id:
-            defektaObat.recommended_supplier_id || rec || null,
-        })
+      await resetDefektaPilihan(
+        runIdParam,
+        defektaObat.kode_obat,
+        supplierId
       );
-      showToast('Kembali ke rekomendasi bobot tertinggi');
+      showToast('Pilihan PBF dibatalkan');
+      const { hasil: freshHasil } = await refreshDefektaData(runIdParam);
+      const data = await getDefektaCandidates(
+        runIdParam,
+        defektaObat.kode_obat
+      );
+      setDefektaCandidates(data.candidates || []);
+      setDefektaRecommendedId(data.recommended_supplier_id || null);
+      setDefektaSelectedId(
+        data.selected_supplier_id || data.recommended_supplier_id || null
+      );
+      if (data.default_qty_order != null) {
+        setDefektaDefaultQty(Number(data.default_qty_order));
+      }
+      if (data.qty_order_satuan) {
+        setDefektaQtySatuan(data.qty_order_satuan);
+      }
+      const refreshedObat =
+        (freshHasil?.grup || [])
+          .flatMap((g) => g.obat || [])
+          .find((o) => o.kode_obat === defektaObat.kode_obat) || defektaObat;
+      setDefektaObat(refreshedObat);
     } catch (err) {
-      showToast(err.message || 'Gagal reset Defekta');
+      showToast(err.message || 'Gagal batalkan Defekta');
     } finally {
       setDefektaSaving(false);
+    }
+  }
+
+  async function handleSetujuiSemua() {
+    if (!runIdParam || setujuiSemuaBusy) return;
+    setSetujuiSemuaBusy(true);
+    try {
+      const result = await setujuiSemuaDefekta(runIdParam);
+      const nOk = Number(result?.jumlah_disetujui) || 0;
+      const nSkip = Number(result?.jumlah_dilewati) || 0;
+      if (nSkip > 0) {
+        showToast(
+          `${nOk} obat disetujui, ${nSkip} dilewati (tidak ada PBF cocok)`
+        );
+      } else {
+        showToast(`${nOk} obat disetujui`);
+      }
+      await refreshDefektaData(runIdParam);
+    } catch (err) {
+      showToast(err.message || 'Gagal Setujui Semua');
+    } finally {
+      setSetujuiSemuaBusy(false);
     }
   }
 
@@ -811,9 +933,36 @@ export default function ForecastingPage() {
         </div>
       }
       pageAction={null}
-      navLoading={hasilLoading || running || detailLoading}
+      navLoading={
+        hasilLoading ||
+        running ||
+        detailLoading ||
+        setujuiSemuaBusy ||
+        defektaFilterLoading
+      }
     >
+      {runIdParam ? (
+        <DefektaFilterPills
+          activeKey={defektaPill}
+          totalBelumDipilih={defektaFilter?.total_belum_dipilih ?? 0}
+          pbfTerpilih={defektaFilter?.pbf_terpilih || []}
+          onChange={setDefektaPill}
+          disabled={hasilLoading || setujuiSemuaBusy}
+        />
+      ) : null}
+
       <div className="space-y-2">
+        {defektaPill === 'belum' && runIdParam && !hasilLoading && !hasilError ? (
+          <button
+            type="button"
+            onClick={handleSetujuiSemua}
+            disabled={setujuiSemuaBusy || (defektaFilter?.total_belum_dipilih ?? 0) === 0}
+            className="flex w-full items-center justify-center gap-2 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+          >
+            {setujuiSemuaBusy ? <SubmitSpinner /> : 'Setujui Semua'}
+          </button>
+        ) : null}
+
         {hasilLoading ? (
           <div className="flex justify-center py-10">
             <SubmitSpinner className="h-6 w-6" />
@@ -1029,9 +1178,11 @@ export default function ForecastingPage() {
         saving={defektaSaving}
         selectedSupplierId={defektaSelectedId}
         recommendedSupplierId={defektaRecommendedId}
+        defaultQtyOrder={defektaDefaultQty}
+        qtyOrderSatuan={defektaQtySatuan}
         onSelectSupplier={setDefektaSelectedId}
         onSave={handleDefektaSave}
-        onReset={handleDefektaReset}
+        onBatalkan={handleDefektaBatalkan}
         onClose={() => {
           if (!defektaSaving) setDefektaObat(null);
         }}

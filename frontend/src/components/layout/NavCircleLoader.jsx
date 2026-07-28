@@ -1,15 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 
+const SIZE = {
+  /** Top-bar trigger (compact) */
+  sm: { box: 'h-7 w-7', logo: 'h-7 w-7', morphClass: 'nav-morph-loader--sm' },
+  /** Legacy large circle (unused after top-bar move; kept for flexibility) */
+  md: { box: 'h-[50px] w-[50px]', logo: 'h-[50px] w-[50px]', morphClass: '' },
+};
+
 /**
- * Collapsed Bottom Nav circle content:
+ * Nav trigger visual:
  * - idle: Heybat logo
  * - loading: Morph Loader (Uiverse.io / andrew-manzyk, MIT)
  * - loading ends: wait for morph cycle boundary (animationiteration) then fade logo back
  *
- * onBusyChange(true) while logo is fading out, morph is visible, or waiting for cycle end —
- * parent makes the circle background transparent (no frame) so accent-yellow morph floats clean.
+ * onBusyChange(true) while logo is fading out, morph is visible, or waiting for cycle end.
  */
-export default function NavCircleLoader({ isLoading = false, onBusyChange }) {
+export default function NavCircleLoader({
+  isLoading = false,
+  onBusyChange,
+  size = 'sm',
+}) {
+  const dims = SIZE[size] || SIZE.sm;
   const [logoOpaque, setLogoOpaque] = useState(true);
   const [showMorph, setShowMorph] = useState(false);
   const [awaitingCycleEnd, setAwaitingCycleEnd] = useState(false);
@@ -65,22 +76,22 @@ export default function NavCircleLoader({ isLoading = false, onBusyChange }) {
   }
 
   return (
-    <span className="relative flex h-[50px] w-[50px] items-center justify-center">
+    <span className={`relative flex items-center justify-center ${dims.box}`}>
       <img
         src="/logo_heybat.png"
         alt=""
         aria-hidden="true"
-        className={`absolute h-[50px] w-[50px] object-contain transition-opacity duration-200 ${
+        className={`absolute object-contain transition-opacity duration-200 ${dims.logo} ${
           logoOpaque && !showMorph ? 'opacity-100' : 'opacity-0'
         }`}
       />
 
       {showMorph ? (
         <span
-          className="nav-morph-loader absolute inset-0 flex items-center justify-center"
+          className={`nav-morph-loader absolute inset-0 flex items-center justify-center ${dims.morphClass}`}
           aria-hidden="true"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="h-14 w-14">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
             <path
               className="nav-morph-loader__shape"
               onAnimationIteration={handleMorphIteration}

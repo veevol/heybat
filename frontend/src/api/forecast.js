@@ -37,6 +37,23 @@ export async function getForecastHasil(runId) {
   );
 }
 
+/** Ringkasan pill filter Defekta untuk 1 forecast run. */
+export async function getDefektaFilter(runId) {
+  return apiJson(
+    apiUrl(`/api/forecast/defekta-filter/${encodeURIComponent(runId)}`)
+  );
+}
+
+/** Setujui PBF pemenang bobot untuk semua obat yang belum dipilih. */
+export async function setujuiSemuaDefekta(runId) {
+  return apiJson(
+    apiUrl(
+      `/api/forecast/defekta-filter/${encodeURIComponent(runId)}/setujui-semua`
+    ),
+    { method: 'POST' }
+  );
+}
+
 export async function getDefektaCandidates(runId, kodeObat) {
   return apiJson(
     apiUrl(
@@ -57,10 +74,12 @@ export async function saveDefektaPilihan(runId, kodeObat, payload) {
   );
 }
 
-export async function resetDefektaPilihan(runId, kodeObat) {
+/** Batalkan 1 pilihan PBF (wajib supplierId). */
+export async function resetDefektaPilihan(runId, kodeObat, supplierId) {
+  const sid = encodeURIComponent(String(supplierId || '').trim());
   return apiJson(
     apiUrl(
-      `/api/forecast/defekta/${encodeURIComponent(runId)}/${encodeURIComponent(kodeObat)}`
+      `/api/forecast/defekta/${encodeURIComponent(runId)}/${encodeURIComponent(kodeObat)}?supplier_id=${sid}`
     ),
     { method: 'DELETE' }
   );

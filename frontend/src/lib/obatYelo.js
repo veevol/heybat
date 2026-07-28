@@ -310,3 +310,26 @@ export function formatStokHargaKartu(stokRingkasan, obat) {
   };
 }
 
+/**
+ * Qty order Defekta dari kebutuhan_beli (satuan_1):
+ * konversi > 1 → CEIL(kebutuhan / konversi); else CEIL(kebutuhan).
+ * @returns {number|null}
+ */
+export function computeQtyOrderDefekta(kebutuhanBeli, obat) {
+  const kebutuhan = Number(kebutuhanBeli);
+  if (!Number.isFinite(kebutuhan) || kebutuhan < 0) return null;
+  const konv = Number(obat?.konversi);
+  if (Number.isFinite(konv) && konv > 1) {
+    return Math.ceil(kebutuhan / konv);
+  }
+  return Math.ceil(kebutuhan);
+}
+
+/** Label satuan qty_order: satuan_2 jika konversi>1 & ada, else satuan_1. */
+export function qtyOrderSatuanLabel(obat) {
+  const konv = Number(obat?.konversi);
+  const sat2 = satuan2Nama(obat);
+  if (Number.isFinite(konv) && konv > 1 && sat2) return sat2;
+  return satuan1Nama(obat);
+}
+

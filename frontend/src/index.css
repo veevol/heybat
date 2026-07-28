@@ -85,6 +85,11 @@ body::-webkit-scrollbar {
   overflow: visible;
 }
 
+.nav-morph-loader--sm svg {
+  width: 28px;
+  height: 28px;
+}
+
 .nav-morph-loader__shape {
   will-change: d;
   fill: var(--nav-morph-color);
