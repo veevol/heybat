@@ -82,7 +82,7 @@ export default function LoginPage() {
         </h1>
 
         {/* Section 3 — tagline */}
-        <p className="mt-0 text-[13px] leading-none text-accent-yellow">
+        <p className="mt-1.5 text-[13px] leading-none text-accent-yellow">
           Aplikasi Heybat untuk Apotek Yelo
         </p>
 
