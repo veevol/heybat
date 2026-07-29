@@ -37,27 +37,48 @@ export default function MenungguPersetujuanPage() {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center bg-bg-base px-6 py-10">
       <div className="w-full max-w-sm text-center">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent-yellow">
-          YELO
-        </p>
-        <h1 className="mt-2 text-[22px] font-bold leading-tight text-text-primary">
-          Menunggu persetujuan
+        {/* Section 1 — logos, kotak sama + object-contain sesuai desain LoginPage */}
+        <div className="flex items-center justify-center gap-3">
+          <img
+            src="/logo_yelo.png"
+            alt="Yelo"
+            className="h-[4.5rem] w-[4.5rem] shrink-0 object-contain"
+          />
+          <img
+            src="/logo_heybat.png?v=trim2"
+            alt="Heybat"
+            className="h-[4.5rem] w-[4.5rem] shrink-0 object-contain"
+          />
+        </div>
+
+        {/* Section 2 — brand title */}
+        <h1 className="mt-5 text-[22px] font-bold leading-none text-text-primary">
+          Yelo Heybat
         </h1>
-        <p className="mt-3 text-[13px] leading-snug text-text-secondary">
-          Akun kamu sudah masuk, menunggu persetujuan owner untuk mengakses
-          Heybat.
+
+        {/* Section 3 — tagline */}
+        <p className="mt-1.5 text-[13px] leading-none text-accent-yellow">
+          Aplikasi Heybat untuk Apotek Yelo
         </p>
+
+        {/* Section 4 — status message */}
+        <h1 className="mt-2 text-[22px] font-bold leading-tight text-text-primary">
+          Menunggu Persetujuan Akses
+        </h1>
+
+        {/* Section 5 — user email */}
         {profile?.email ? (
           <p className="mt-2 text-[11px] text-text-muted">{profile.email}</p>
         ) : null}
 
+        {/* Section 6 — sign out */}
         <button
           type="button"
           onClick={handleSignOut}
           disabled={busy}
-          className="mt-8 flex w-full items-center justify-center gap-2 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2.5 text-[13px] font-semibold text-text-primary transition hover:bg-bg-surface-hover disabled:opacity-60"
+          className="mt-8 flex h-11 w-full items-center justify-center gap-3 rounded-[4px] border border-[#dadce0] bg-white px-3 text-[14px] font-medium text-[#3c4043] shadow-sm transition hover:bg-[#f8f9fa] disabled:opacity-60"
         >
-          {busy ? <SubmitSpinner className="h-4 w-4" /> : null}
+          {busy ? <SubmitSpinner className="h-5 w-5" /> : null}
           Keluar
         </button>
       </div>
