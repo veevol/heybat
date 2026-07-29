@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import {
   createSupplier,
   deleteSupplier,
-  listSuppliers,
+  listSuppliersDashboard,
   updateSupplier,
 } from '../api/suppliers';
 import AppShell from '../components/layout/AppShell';
@@ -11,6 +11,7 @@ import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import SupplierCard from '../components/SupplierCard';
 import SupplierDetailSheet from '../components/SupplierDetailSheet';
 import SupplierFormModal from '../components/SupplierFormModal';
+import SupplierPricelistTabs from '../components/SupplierPricelistTabs';
 import SupplierSkeleton from '../components/SupplierSkeleton';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
@@ -24,11 +25,18 @@ const EMPTY_FORM = {
   no_wa_sales: '',
   jenis_kelamin_sales: '',
   alamat: '',
+  termin_hari: '',
   jenis_pbf: [],
   jadwal: defaultJadwal(),
 };
 
 function toPayload(form) {
+  const terminRaw = form.termin_hari;
+  let termin_hari = null;
+  if (terminRaw !== '' && terminRaw !== null && terminRaw !== undefined) {
+    const n = Number(terminRaw);
+    termin_hari = Number.isInteger(n) && n >= 0 ? n : null;
+  }
   return {
     nama: form.nama,
     inisial: form.inisial,
@@ -37,6 +45,7 @@ function toPayload(form) {
     no_wa_sales: form.no_wa_sales,
     jenis_kelamin_sales: form.jenis_kelamin_sales || null,
     alamat: form.alamat,
+    termin_hari,
     jenis_pbf: form.jenis_pbf,
     jadwal: form.jadwal.map((row) => ({
       hari: row.hari,
@@ -76,7 +85,7 @@ export default function DataSupplierPage() {
     setLoading(true);
     setLoadError('');
     try {
-      const data = await listSuppliers();
+      const data = await listSuppliersDashboard();
       setSuppliers(data);
       return data;
     } catch (err) {
@@ -114,6 +123,10 @@ export default function DataSupplierPage() {
       no_wa_sales: supplier.no_wa_sales || '',
       jenis_kelamin_sales: supplier.jenis_kelamin_sales || '',
       alamat: supplier.alamat || '',
+      termin_hari:
+        supplier.termin_hari === null || supplier.termin_hari === undefined
+          ? ''
+          : String(supplier.termin_hari),
       jenis_pbf: supplier.jenis_pbf || [],
       jadwal: defaultJadwal(supplier.jadwal),
     });
@@ -193,7 +206,8 @@ export default function DataSupplierPage() {
 
   return (
     <AppShell
-      title="Data Supplier"
+      title="Supplier"
+      actions={<SupplierPricelistTabs active="supplier" />}
       pageAction={canTambah ? { onClick: openCreate } : null}
       navLoading={loading || submitting || deleteSubmitting}
     >

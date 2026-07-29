@@ -7,6 +7,11 @@ export async function listSuppliers() {
   return apiJson(API_BASE);
 }
 
+/** Supplier + ringkasan pricelist (upload terakhir, matched/total). */
+export async function listSuppliersDashboard() {
+  return apiJson(`${API_BASE}/dashboard`);
+}
+
 export async function createSupplier(payload) {
   return apiJson(API_BASE, {
     method: 'POST',

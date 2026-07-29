@@ -104,3 +104,29 @@ export async function listUnmatched({ pbf_id } = {}) {
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiJson(`${API_BASE}/unmatched${suffix}`);
 }
+
+/**
+ * Board pricelist+matching untuk satu PBF.
+ * @param {string} pbfId
+ * @param {{ status?: string, q?: string }} [opts]
+ */
+export async function getMatchingBoard(
+  pbfId,
+  { status = 'all', q = '', limit = 40, offset = 0 } = {}
+) {
+  const qs = new URLSearchParams({
+    pbf_id: pbfId,
+    status,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (q) qs.set('q', q);
+  return apiJson(`${API_BASE}/board?${qs.toString()}`);
+}
+
+/** Batalkan pengajuan menunggu_verifikasi. */
+export async function batalMatching(id) {
+  return apiJson(`${API_BASE}/${encodeURIComponent(id)}/batal`, {
+    method: 'DELETE',
+  });
+}

@@ -2,7 +2,7 @@ const DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 const JENIS_PBF_OPTIONS = ['Farma', 'Alkes', 'OTC', 'Herbal', 'Lainnya'];
 const GENDER_OPTIONS = ['L', 'P'];
 
-const SELECT_WITH_JADWAL = `
+const SELECT_WITH_JADWAL_CORE = `
   id,
   nama,
   inisial,
@@ -23,6 +23,12 @@ const SELECT_WITH_JADWAL = `
     jam_cutoff
   )
 `.replace(/\s+/g, ' ').trim();
+
+/** Prefer select with termin_hari; fallback if migration belum dijalankan. */
+const SELECT_WITH_JADWAL = SELECT_WITH_JADWAL_CORE.replace(
+  'alamat,',
+  'alamat, termin_hari,'
+);
 
 function normalizeText(value) {
   if (value === undefined || value === null) return null;
@@ -102,6 +108,7 @@ module.exports = {
   DAYS,
   JENIS_PBF_OPTIONS,
   SELECT_WITH_JADWAL,
+  SELECT_WITH_JADWAL_CORE,
   normalizeText,
   normalizeGender,
   normalizeJenisPbf,

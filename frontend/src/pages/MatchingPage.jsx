@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { RefreshCw } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Search } from 'lucide-react';
 import { listSuppliers } from '../api/suppliers';
 import {
+  batalMatching,
   createMatching,
-  getKandidatMatching,
   getKatalogObat,
+  getMatchingBoard,
   getRefreshKandidatStatus,
   markTidakCocok,
   refreshKandidat,
+  updateMatching,
+  verifikasiMatching,
 } from '../api/matching';
 import {
   createObatDariMatching,
@@ -16,16 +19,13 @@ import {
 } from '../api/obatYelo';
 import { listRef } from '../api/refData';
 import AppShell from '../components/layout/AppShell';
-import SearchableObatSelect from '../components/SearchableObatSelect';
+import MatchingActionCard from '../components/MatchingActionCard';
+import MatchingMatchCard from '../components/MatchingMatchCard';
 import SubmitSpinner from '../components/SubmitSpinner';
+import SupplierPricelistTabs from '../components/SupplierPricelistTabs';
 import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingModal';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import {
-  formatHarga,
-  formatSatuanKonversi,
-  formatScorePercent,
-} from '../lib/matchingUi';
 import { toTitleCaseNamaObat } from '../lib/obatYelo';
 
 const EMPTY_TAMBAH_FORM = {
@@ -47,40 +47,29 @@ const EMPTY_REFS = {
   'grup-substitusi': [],
 };
 
-const selectClass =
-  'w-full rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow';
-
-const PAGE = 10;
+const FILTERS = [
+  { id: 'all', label: 'Semua' },
+  { id: 'match', label: 'Match' },
+  { id: 'menunggu', label: 'Menunggu' },
+  { id: 'belum', label: 'Blm Diajukan' },
+  { id: 'no_match', label: 'No Match' },
+];
 
 function MatchingCardSkeleton() {
   return (
-    <div className="grid grid-cols-1 gap-2">
+    <div className="grid grid-cols-1 gap-1.5">
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
           className="animate-pulse rounded-[4px] border border-border-subtle bg-bg-surface p-2.5"
         >
-          <div className="h-3.5 w-3/4 rounded-[4px] bg-bg-surface-hover" />
-          <div className="mt-2 h-3 w-1/2 rounded-[4px] bg-bg-surface-hover" />
-          <div className="mt-3 h-16 w-full rounded-[4px] bg-bg-surface-hover" />
+          <div className="h-3.5 w-20 rounded-[4px] bg-bg-surface-hover" />
+          <div className="mt-2 h-3.5 w-3/4 rounded-[4px] bg-bg-surface-hover" />
+          <div className="mt-2 h-12 w-full rounded-[4px] bg-bg-surface-hover" />
         </div>
       ))}
     </div>
   );
-}
-
-function formatRelative(iso) {
-  if (!iso) return null;
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return null;
-  const diffSec = Math.round((Date.now() - then) / 1000);
-  if (diffSec < 60) return 'baru saja';
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin} menit lalu`;
-  const diffHour = Math.round(diffMin / 60);
-  if (diffHour < 48) return `${diffHour} jam lalu`;
-  const diffDay = Math.round(diffHour / 24);
-  return `${diffDay} hari lalu`;
 }
 
 function resolveObatMeta(kode, katalogMap, kandidat = []) {
@@ -100,25 +89,41 @@ function resolveObatMeta(kode, katalogMap, kandidat = []) {
   return { kode_obat: kode, nama_obat: kode };
 }
 
+function boardCacheKey(pbfId, status, q) {
+  return `${pbfId}|${status}|${q || ''}`;
+}
+
 export default function MatchingPage() {
-  const { hasAccess } = useAuth();
+  const { hasAccess, profile } = useAuth();
   const canUsulkan = hasAccess('matching', 'usulkan');
-  const canVerifikasi = hasAccess('matching', 'verifikasi');
   const canEditMatching = hasAccess('matching', 'edit');
+  const canEditObat = hasAccess('data-obat-yelo', 'edit');
   const canTambahObat = hasAccess('data-obat-yelo', 'tambah');
+  const isOwner = profile?.is_owner === true;
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
   const [suppliers, setSuppliers] = useState([]);
-  const [pbfId, setPbfId] = useState('');
+  const [pbfId, setPbfId] = useState(() => searchParams.get('pbf_id') || '');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [query, setQuery] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
   const [katalog, setKatalog] = useState([]);
-  const [items, setItems] = useState([]);
-  const [totalUnmatched, setTotalUnmatched] = useState(0);
+  const [cards, setCards] = useState([]);
+  const [totalCards, setTotalCards] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [skipped, setSkipped] = useState(() => new Set());
+  const [counts, setCounts] = useState({
+    match: 0,
+    menunggu: 0,
+    belum: 0,
+    no_match: 0,
+  });
+  const PAGE = 40;
   const [selections, setSelections] = useState({});
-  const [submittingKode, setSubmittingKode] = useState('');
+  const [submittingKey, setSubmittingKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [katalogLoading, setKatalogLoading] = useState(true);
-  const [cacheDihitungPada, setCacheDihitungPada] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState(null);
   const [toast, setToast] = useState('');
@@ -130,6 +135,8 @@ export default function MatchingPage() {
   const [tambahKodeLoading, setTambahKodeLoading] = useState(false);
   const toastTimer = useRef(null);
   const pollTimer = useRef(null);
+  const boardCacheRef = useRef(new Map());
+  const loadSeqRef = useRef(0);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -149,209 +156,303 @@ export default function MatchingPage() {
   );
 
   useEffect(() => {
-    Promise.all([listSuppliers(), getKatalogObat()])
-      .then(([sups, obat]) => {
-        setSuppliers(sups || []);
-        setKatalog(obat || []);
-      })
-      .catch((err) => showToast(err.message || 'Gagal memuat data awal'))
-      .finally(() => setKatalogLoading(false));
+    const t = setTimeout(() => setDebouncedQ(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
 
+  useEffect(() => {
+    const fromUrl = searchParams.get('pbf_id') || '';
+    if (fromUrl) {
+      setPbfId(fromUrl);
+      try {
+        sessionStorage.setItem('heybat_pricelist_pbf_id', fromUrl);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    listSuppliers()
+      .then((data) => {
+        setSuppliers(data || []);
+        const fromUrl = searchParams.get('pbf_id');
+        let nextId = fromUrl || '';
+        if (!nextId) {
+          try {
+            nextId = sessionStorage.getItem('heybat_pricelist_pbf_id') || '';
+          } catch {
+            nextId = '';
+          }
+        }
+        if (nextId && data?.some((s) => s.id === nextId)) {
+          setPbfId(nextId);
+        } else if (!nextId && data?.length === 1) {
+          setPbfId(data[0].id);
+        } else if (!nextId) {
+          setPbfId('');
+        }
+      })
+      .catch((err) => showToast(err.message || 'Gagal memuat supplier'));
+    getKatalogObat()
+      .then((data) => setKatalog(data || []))
+      .catch(() => setKatalog([]))
+      .finally(() => setKatalogLoading(false));
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
-  }, [showToast]);
+  }, [showToast, searchParams]);
 
-  const applySelections = useCallback((list, merge = false) => {
+  const applyBoardPayload = useCallback((data, { append = false, nextOffset = 0 } = {}) => {
+    const pageCards = data.cards || [];
+    setCards((prev) => (append ? [...prev, ...pageCards] : pageCards));
+    setTotalCards(data.total || 0);
+    setOffset(nextOffset + pageCards.length);
+    setCounts(data.counts || { match: 0, menunggu: 0, belum: 0, no_match: 0 });
     setSelections((prev) => {
-      const next = merge ? { ...prev } : {};
-      for (const row of list) {
-        if (!next[row.kode_pbf]) {
-          next[row.kode_pbf] = row.kandidat?.[0]?.kode_obat_yelo || '';
+      const next = { ...prev };
+      for (const card of pageCards) {
+        const key = card.pricelist?.kode_pbf;
+        if (!key || next[key]) continue;
+        if (card.kind === 'pending' && card.kode_obat_yelo) {
+          next[key] = card.kode_obat_yelo;
+          continue;
         }
+        const top = [...(card.kandidat || [])].sort(
+          (a, b) => (b.skor_kemiripan || 0) - (a.skor_kemiripan || 0)
+        )[0];
+        if (top?.kode_obat_yelo) next[key] = top.kode_obat_yelo;
       }
       return next;
     });
   }, []);
 
-  const loadKandidat = useCallback(
-    async (id, { append = false, nextOffset = 0 } = {}) => {
+  const loadBoard = useCallback(
+    async (
+      id,
+      { status, q, append = false, nextOffset = 0, force = false } = {}
+    ) => {
       if (!id) {
-        setItems([]);
-        setTotalUnmatched(0);
-        setSelections({});
-        setOffset(0);
-        setCacheDihitungPada(null);
+        setCards([]);
+        setTotalCards(0);
         return;
       }
+      const useStatus = status ?? statusFilter;
+      const useQ = q ?? debouncedQ;
+      const cacheKey = boardCacheKey(id, useStatus, useQ);
+
+      if (!append && !force) {
+        const cached = boardCacheRef.current.get(cacheKey);
+        if (cached) {
+          applyBoardPayload(cached, { append: false, nextOffset: 0 });
+          setLoading(false);
+          // Soft revalidate di background
+          loadSeqRef.current += 1;
+          const seq = loadSeqRef.current;
+          try {
+            const data = await getMatchingBoard(id, {
+              status: useStatus,
+              q: useQ,
+              limit: PAGE,
+              offset: 0,
+            });
+            if (seq !== loadSeqRef.current) return;
+            boardCacheRef.current.set(cacheKey, data);
+            applyBoardPayload(data, { append: false, nextOffset: 0 });
+          } catch {
+            /* biarkan cache tampil */
+          }
+          return;
+        }
+        // Filter baru: jangan tampilkan card filter lain sambil menunggu
+        setCards([]);
+      }
+
       if (append) setLoadingMore(true);
       else setLoading(true);
+
+      loadSeqRef.current += 1;
+      const seq = loadSeqRef.current;
       try {
-        const data = await getKandidatMatching(id, {
+        const data = await getMatchingBoard(id, {
+          status: useStatus,
+          q: useQ,
           limit: PAGE,
           offset: nextOffset,
         });
-        const list = data.items || [];
-        setItems((prev) => (append ? [...prev, ...list] : list));
-        setTotalUnmatched(data.total_unmatched ?? list.length);
-        setOffset(nextOffset + list.length);
-        setCacheDihitungPada(data.cache_dihitung_pada || null);
-        applySelections(list, append);
-
-        if (data.refresh_job?.status === 'running') {
-          setRefreshing(true);
-          setRefreshProgress(data.refresh_job);
+        if (seq !== loadSeqRef.current) return;
+        if (!append) boardCacheRef.current.set(cacheKey, data);
+        else {
+          const prev = boardCacheRef.current.get(cacheKey);
+          if (prev) {
+            boardCacheRef.current.set(cacheKey, {
+              ...data,
+              cards: [...(prev.cards || []), ...(data.cards || [])],
+            });
+          }
         }
+        applyBoardPayload(data, { append, nextOffset });
       } catch (err) {
-        showToast(err.message || 'Gagal memuat kandidat');
-        if (!append) {
-          setItems([]);
-          setTotalUnmatched(0);
-          setOffset(0);
-        }
+        if (seq !== loadSeqRef.current) return;
+        showToast(err.message || 'Gagal memuat board');
+        if (!append) setCards([]);
       } finally {
-        setLoading(false);
-        setLoadingMore(false);
+        if (seq === loadSeqRef.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
-    [showToast, applySelections]
+    [statusFilter, debouncedQ, showToast, applyBoardPayload]
   );
 
   useEffect(() => {
-    setSkipped(new Set());
-    setOffset(0);
-    setRefreshing(false);
-    setRefreshProgress(null);
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current);
-      pollTimer.current = null;
+    if (!pbfId) {
+      setCards([]);
+      return;
     }
-    loadKandidat(pbfId, { append: false, nextOffset: 0 });
-  }, [pbfId, loadKandidat]);
+    loadBoard(pbfId);
+  }, [pbfId, statusFilter, debouncedQ, loadBoard]);
 
-  const stopPolling = useCallback(() => {
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
-  }, []);
+  function invalidateBoardCache() {
+    boardCacheRef.current.clear();
+  }
 
-  const startPollingRefresh = useCallback(
-    (id) => {
-      stopPolling();
-      pollTimer.current = setInterval(async () => {
-        try {
-          const job = await getRefreshKandidatStatus(id);
-          setRefreshProgress(job);
-          if (job.status === 'done') {
-            stopPolling();
-            setRefreshing(false);
-            const elapsed = job.elapsed_ms
-              ? ` · ${(job.elapsed_ms / 1000).toFixed(1)}s`
-              : '';
-            showToast(`Kandidat di-refresh${elapsed}`);
-            setSkipped(new Set());
-            await loadKandidat(id, { append: false, nextOffset: 0 });
-          } else if (job.status === 'error') {
-            stopPolling();
-            setRefreshing(false);
-            showToast(job.error || 'Refresh gagal');
-          } else if (job.status === 'idle') {
-            stopPolling();
-            setRefreshing(false);
-          }
-        } catch (err) {
-          stopPolling();
-          setRefreshing(false);
-          showToast(err.message || 'Gagal cek status refresh');
-        }
-      }, 1500);
-    },
-    [loadKandidat, showToast, stopPolling]
-  );
-
-  const handleRefreshKandidat = async () => {
-    if (!pbfId || refreshing) return;
+  async function handleRefreshKandidat() {
+    if (!pbfId || refreshing || !canEditMatching) return;
     setRefreshing(true);
     setRefreshProgress({ status: 'running', processed: 0, total: 0 });
     try {
-      const result = await refreshKandidat(pbfId);
-      setRefreshProgress(result.job || { status: 'running' });
-      showToast('Refresh kandidat dimulai…');
-      startPollingRefresh(pbfId);
+      await refreshKandidat(pbfId);
+      if (pollTimer.current) clearInterval(pollTimer.current);
+      pollTimer.current = setInterval(async () => {
+        try {
+          const st = await getRefreshKandidatStatus(pbfId);
+          const job = st?.job || st;
+          setRefreshProgress(job || { status: 'running' });
+          if (job?.status === 'done' || job?.status === 'error' || job?.status === 'cancelled' || st?.status === 'idle') {
+            clearInterval(pollTimer.current);
+            pollTimer.current = null;
+            setRefreshing(false);
+            invalidateBoardCache();
+            await loadBoard(pbfId, { force: true });
+            showToast('Kandidat diperbarui');
+          }
+        } catch {
+          clearInterval(pollTimer.current);
+          pollTimer.current = null;
+          setRefreshing(false);
+        }
+      }, 1500);
     } catch (err) {
-      if (err.status === 409) {
-        setRefreshing(true);
-        showToast('Refresh masih berjalan');
-        startPollingRefresh(pbfId);
-        return;
-      }
       setRefreshing(false);
-      setRefreshProgress(null);
-      showToast(err.message || 'Gagal memulai refresh');
+      showToast(err.message || 'Gagal refresh kandidat');
     }
-  };
+  }
 
-  const visibleItems = useMemo(
-    () => items.filter((row) => !skipped.has(row.kode_pbf)),
-    [items, skipped]
-  );
+  function handleEditMatch(card) {
+    const kode = card?.obat?.kode_obat;
+    if (!kode) return;
+    navigate(`/data-obat-yelo?edit=${encodeURIComponent(kode)}`);
+  }
 
-  const handleSelect = (kodePbf, kodeObat) => {
+  function handleSelect(kodePbf, kodeObat) {
     setSelections((prev) => ({ ...prev, [kodePbf]: kodeObat }));
-  };
+  }
 
-  const handlePilih = async (row) => {
-    const kodeObat = selections[row.kode_pbf];
-    if (!kodeObat) {
-      showToast('Pilih obat Yelo terlebih dahulu');
-      return;
-    }
-    setSubmittingKode(row.kode_pbf);
+  async function handleAjukan(card) {
+    const kodePbf = card.pricelist?.kode_pbf;
+    const selectedKode = selections[kodePbf];
+    if (!pbfId || !kodePbf || !selectedKode) return;
+    setSubmittingKey(card.board_key);
     try {
       await createMatching({
-        kode_obat_yelo: kodeObat,
+        kode_obat_yelo: selectedKode,
         pricelist_pbf_id: pbfId,
-        pricelist_kode_pbf: row.kode_pbf,
+        pricelist_kode_pbf: kodePbf,
       });
-      setSkipped((prev) => new Set(prev).add(row.kode_pbf));
-      setTotalUnmatched((n) => Math.max(0, n - 1));
-      showToast('Tersimpan — menunggu verifikasi');
+      showToast('Diajukan — menunggu verifikasi');
+      invalidateBoardCache();
+      await loadBoard(pbfId, { force: true });
     } catch (err) {
-      showToast(err.message || 'Gagal menyimpan matching');
+      showToast(err.message || 'Gagal mengajukan');
     } finally {
-      setSubmittingKode('');
+      setSubmittingKey('');
     }
-  };
+  }
 
-  const handleSkip = async (kodePbf) => {
-    setSubmittingKode(kodePbf);
+  async function handleNoData(card) {
+    const kodePbf = card.pricelist?.kode_pbf;
+    if (!pbfId || !kodePbf) return;
+    setSubmittingKey(card.board_key);
     try {
       await markTidakCocok({
         pricelist_pbf_id: pbfId,
         pricelist_kode_pbf: kodePbf,
       });
-      setSkipped((prev) => new Set(prev).add(kodePbf));
-      setTotalUnmatched((n) => Math.max(0, n - 1));
-      showToast('Ditandai tidak cocok');
+      showToast('Ditandai No Data');
+      invalidateBoardCache();
+      await loadBoard(pbfId, { force: true });
     } catch (err) {
-      showToast(err.message || 'Gagal menandai tidak cocok');
+      showToast(err.message || 'Gagal menandai');
     } finally {
-      setSubmittingKode('');
+      setSubmittingKey('');
     }
-  };
+  }
 
-  const openTambahObat = async (row) => {
+  async function handleBatalkan(card) {
+    if (!card.matching_id) return;
+    setSubmittingKey(card.board_key);
+    try {
+      await batalMatching(card.matching_id);
+      showToast('Pengajuan dibatalkan');
+      invalidateBoardCache();
+      await loadBoard(pbfId, { force: true });
+    } catch (err) {
+      showToast(err.message || 'Gagal membatalkan');
+    } finally {
+      setSubmittingKey('');
+    }
+  }
+
+  async function handleSetujui(card) {
+    if (!card.matching_id || !isOwner) return;
+    const kodePbf = card.pricelist?.kode_pbf;
+    const selectedKode = selections[kodePbf] || card.kode_obat_yelo;
+    if (!selectedKode) {
+      showToast('Pilih obat Yelo dulu');
+      return;
+    }
+    setSubmittingKey(card.board_key);
+    try {
+      if (selectedKode !== card.kode_obat_yelo) {
+        await updateMatching(card.matching_id, {
+          kode_obat_yelo: selectedKode,
+        });
+      }
+      await verifikasiMatching(card.matching_id, 'setuju');
+      showToast('Matching disetujui');
+      invalidateBoardCache();
+      await loadBoard(pbfId, { force: true });
+    } catch (err) {
+      showToast(err.message || 'Gagal menyetujui');
+    } finally {
+      setSubmittingKey('');
+    }
+  }
+
+  async function openTambahObat(card) {
+    const row = card.pricelist;
     setTambahRow(row);
     setTambahError('');
     setTambahForm({
       ...EMPTY_TAMBAH_FORM,
-      nama_obat: toTitleCaseNamaObat(row.nama_barang || ''),
+      nama_obat: toTitleCaseNamaObat(row?.nama_barang || ''),
     });
     setTambahKodeLoading(true);
     try {
-      const [nextKode, kandungan, golongan, satuan, grup] = await Promise.all([
+      const [next, ...refLists] = await Promise.all([
         getNextKodeApp(),
         listRef('kandungan'),
         listRef('golongan'),
@@ -360,43 +461,41 @@ export default function MatchingPage() {
       ]);
       setTambahForm((prev) => ({
         ...prev,
-        kode_obat: nextKode?.kode_obat || '',
+        kode_obat: next?.kode_obat || '',
       }));
       setTambahRefs({
-        kandungan: kandungan || [],
-        golongan: golongan || [],
-        satuan: satuan || [],
-        'grup-substitusi': grup || [],
+        kandungan: refLists[0] || [],
+        golongan: refLists[1] || [],
+        satuan: refLists[2] || [],
+        'grup-substitusi': refLists[3] || [],
       });
     } catch (err) {
       setTambahError(err.message || 'Gagal menyiapkan form');
     } finally {
       setTambahKodeLoading(false);
     }
-  };
+  }
 
-  const closeTambahObat = () => {
+  function closeTambahObat() {
     if (tambahSubmitting) return;
     setTambahRow(null);
     setTambahForm(EMPTY_TAMBAH_FORM);
     setTambahError('');
-  };
+  }
 
-  const handleTambahField = (e) => {
-    const { name, value } = e.target;
+  function handleTambahField(event) {
+    const { name, value } = event.target;
     setTambahForm((prev) => ({ ...prev, [name]: value }));
-  };
+  }
 
-  const handleTambahRefCreated = (jenis, created) => {
-    const key =
-      jenis === 'grup-substitusi' ? 'grup-substitusi' : jenis;
+  function handleTambahRefCreated(jenis, item) {
     setTambahRefs((prev) => ({
       ...prev,
-      [key]: [...(prev[key] || []), created],
+      [jenis]: [...(prev[jenis] || []), item],
     }));
-  };
+  }
 
-  const handleSimpanAjukan = async (e) => {
+  async function handleSimpanAjukan(e) {
     e.preventDefault();
     if (!tambahRow || !pbfId) return;
     setTambahSubmitting(true);
@@ -433,275 +532,155 @@ export default function MatchingPage() {
         });
       }
 
-      setSkipped((prev) => new Set(prev).add(tambahRow.kode_pbf));
-      setTotalUnmatched((n) => Math.max(0, n - 1));
       setTambahRow(null);
       setTambahForm(EMPTY_TAMBAH_FORM);
       showToast('Obat dibuat & diajukan — menunggu verifikasi');
+      invalidateBoardCache();
+      await loadBoard(pbfId, { force: true });
     } catch (err) {
       setTambahError(err.message || 'Gagal menyimpan obat');
     } finally {
       setTambahSubmitting(false);
     }
-  };
-
-  const cacheLabel = formatRelative(cacheDihitungPada);
+  }
 
   return (
     <AppShell
-      title="Matching"
-      navLoading={loading || katalogLoading || refreshing}
+      title="Pricelist"
       actions={
-        <div className="flex items-center gap-2 text-[11px]">
-          {canVerifikasi ? (
-            <>
-              <Link
-                to="/matching/verifikasi"
-                className="text-accent-yellow hover:underline"
-              >
-                Verifikasi
-              </Link>
-              <span className="text-text-muted">·</span>
-            </>
-          ) : null}
-          <Link
-            to="/matching/belum-matching"
-            className="text-accent-yellow hover:underline"
-          >
-            Belum match
-          </Link>
-        </div>
+        <SupplierPricelistTabs
+          active="pricelist"
+          onRefreshKandidat={handleRefreshKandidat}
+          refreshDisabled={!pbfId || !canEditMatching}
+          refreshing={refreshing}
+        />
       }
+      navLoading={loading || katalogLoading || refreshing}
     >
-      <label className="mb-1 block text-[13px] text-text-secondary">
-        Pilih PBF
-      </label>
-      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-        <select
-          className={`${selectClass} sm:flex-1`}
-          value={pbfId}
-          onChange={(e) => setPbfId(e.target.value)}
-        >
-          <option value="">— Pilih supplier —</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.inisial ? `${s.inisial} · ` : ''}
-              {s.nama}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          disabled={!pbfId || refreshing || !canEditMatching}
-          onClick={handleRefreshKandidat}
-          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] font-semibold text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
-        >
-          {refreshing ? (
-            <SubmitSpinner className="h-3.5 w-3.5" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5 text-accent-yellow" />
-          )}
-          Refresh Kandidat
-        </button>
-      </div>
+      {pbfId ? (
+        <div className="sticky top-12 z-20 -mx-3 mb-3 space-y-2 bg-bg-surface/80 px-3 pb-2 pt-1 backdrop-blur-md">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Cari nama obat..."
+              className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-1.5 pl-10 pr-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow"
+            />
+          </div>
 
-      {pbfId && (
-        <p className="mb-2 text-[11px] leading-snug text-text-muted">
-          {cacheLabel
-            ? `Kandidat terakhir dihitung: ${cacheLabel}`
-            : 'Belum ada cache kandidat — klik Refresh Kandidat atau buka list.'}
-          {refreshing && refreshProgress && (
-            <span className="ml-1 text-state-warning">
-              · refresh {refreshProgress.processed || 0}/
-              {refreshProgress.total || '…'}
-            </span>
-          )}
-        </p>
-      )}
+          <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
+            {FILTERS.map((f) => {
+              const active = statusFilter === f.id;
+              const count =
+                f.id === 'all'
+                  ? counts.match + counts.menunggu + counts.belum + counts.no_match
+                  : counts[f.id === 'belum' ? 'belum' : f.id === 'no_match' ? 'no_match' : f.id] ?? 0;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setStatusFilter(f.id)}
+                  className={`flex-none whitespace-nowrap rounded-[4px] px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
+                    active
+                      ? 'bg-accent-yellow text-bg-base'
+                      : 'border border-border-subtle bg-bg-surface text-text-secondary hover:bg-bg-surface-hover'
+                  }`}
+                >
+                  {f.label}
+                  {` (${count})`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
-      {pbfId && !loading && (
-        <p className="mb-2 text-[11px] text-text-muted">
-          {totalUnmatched} belum matching · menampilkan {visibleItems.length}
+      {refreshing && refreshProgress ? (
+        <p className="mb-2 text-[11px] text-state-warning">
+          Refresh {refreshProgress.processed || 0}/{refreshProgress.total || '…'}
         </p>
-      )}
+      ) : null}
 
       {!pbfId ? (
         <p className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-4 text-[13px] text-text-muted">
-          Pilih PBF untuk melihat item yang belum di-match.
+          Buka dari card supplier (tap progress matching) untuk melihat pricelist.
         </p>
-      ) : loading || katalogLoading ? (
+      ) : (loading || katalogLoading) && cards.length === 0 ? (
         <MatchingCardSkeleton />
-      ) : visibleItems.length === 0 ? (
+      ) : cards.length === 0 ? (
         <p className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-4 text-[13px] text-text-muted">
-          Semua kode PBF untuk supplier ini sudah matching aktif, ditandai tidak
-          cocok, atau sudah diproses di sesi ini.
+          Tidak ada item untuk filter ini.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-2">
-          {visibleItems.map((row) => {
-            const selectedKode = selections[row.kode_pbf] || '';
-            const selectedMeta = resolveObatMeta(
-              selectedKode,
-              katalogMap,
-              row.kandidat
-            );
-            const selectedBadge = formatSatuanKonversi(selectedMeta);
-            const alternatives = (row.kandidat || []).filter(
-              (k) => k.kode_obat_yelo !== selectedKode
-            );
-            const hargaLabel = formatHarga(row.harga_dasar);
-            const busy = submittingKode === row.kode_pbf;
+        <div className="grid grid-cols-1 gap-1.5">
+          {cards.map((card) => {
+            if (card.kind === 'match') {
+              return (
+                <MatchingMatchCard
+                  key={card.board_key}
+                  card={card}
+                  inisialPbf={selectedPbf?.inisial}
+                  canEditMatch={canEditObat}
+                  onEditMatch={handleEditMatch}
+                />
+              );
+            }
+
+            const kodePbf = card.pricelist?.kode_pbf;
+            const topKandidat = [...(card.kandidat || [])].sort(
+              (a, b) => (b.skor_kemiripan || 0) - (a.skor_kemiripan || 0)
+            )[0];
+            const selectedKode =
+              selections[kodePbf] ||
+              (card.kind === 'pending' ? card.kode_obat_yelo : '') ||
+              topKandidat?.kode_obat_yelo ||
+              '';
+            const selectedMeta =
+              resolveObatMeta(selectedKode, katalogMap, card.kandidat) ||
+              (card.selected_obat
+                ? {
+                    ...card.selected_obat,
+                    kode_obat: card.selected_obat.kode_obat || card.kode_obat_yelo,
+                  }
+                : null);
 
             return (
-              <article
-                key={row.kode_pbf}
-                className="rounded-[4px] border border-border-subtle bg-bg-surface p-2.5 shadow-sm"
-              >
-                {/* Section 1 — Data PBF */}
-                <div>
-                  <div className="flex items-start justify-between gap-2">
-                    <h2 className="min-w-0 flex-1 text-[14px] font-bold leading-snug text-text-primary">
-                      {row.nama_barang || '—'}
-                    </h2>
-                    {selectedPbf?.inisial ? (
-                      <span className="shrink-0 rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                        {selectedPbf.inisial}
-                      </span>
-                    ) : null}
-                  </div>
-                  {(row.satuan || hargaLabel) && (
-                    <p className="mt-1 text-[12px] leading-snug text-text-secondary">
-                      {[row.satuan, hargaLabel].filter(Boolean).join(' · ')}
-                    </p>
-                  )}
-                  {row.catatan_kondisi ? (
-                    <p className="mt-1 text-[11px] leading-snug text-text-muted">
-                      {row.catatan_kondisi}
-                    </p>
-                  ) : null}
-                </div>
-
-                {/* Section 2 — Obat Yelo terpilih & sugesti */}
-                <div className="mt-2 rounded-[4px] border border-border-subtle p-1.5">
-                  {selectedMeta ? (
-                    <div className="flex items-center gap-2 rounded-[4px] bg-accent-yellow px-2 py-1.5">
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-bold leading-snug text-bg-base">
-                        {selectedMeta.nama_obat || selectedKode}
-                      </span>
-                      {selectedBadge ? (
-                        <span className="shrink-0 rounded-[4px] bg-bg-base/15 px-1.5 py-0.5 text-[10px] font-semibold text-bg-base">
-                          {selectedBadge}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="px-2 py-1.5 text-[12px] text-text-muted">
-                      Belum ada obat terpilih
-                    </p>
-                  )}
-
-                  {alternatives.length > 0 && (
-                    <div className="mt-1 space-y-1">
-                      {alternatives.map((k) => {
-                        const meta = resolveObatMeta(
-                          k.kode_obat_yelo,
-                          katalogMap,
-                          [k]
-                        );
-                        const badge = formatSatuanKonversi(meta);
-                        return (
-                          <button
-                            key={k.kode_obat_yelo}
-                            type="button"
-                            onClick={() =>
-                              handleSelect(row.kode_pbf, k.kode_obat_yelo)
-                            }
-                            className="flex w-full items-center gap-2 rounded-[4px] border border-border-subtle bg-bg-base px-2 py-1.5 text-left hover:bg-bg-surface-hover"
-                          >
-                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-accent-yellow">
-                              {k.nama_obat}
-                            </span>
-                            {badge ? (
-                              <span className="shrink-0 text-[10px] text-text-muted">
-                                {badge}
-                              </span>
-                            ) : null}
-                            <span className="shrink-0 text-[10px] font-semibold text-text-secondary">
-                              {formatScorePercent(k.skor_kemiripan)}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div className="mt-1.5">
-                    <SearchableObatSelect
-                      options={katalog}
-                      value={selectedKode}
-                      onChange={(kode) => handleSelect(row.kode_pbf, kode)}
-                      borderClassName="border-accent-yellow"
-                    />
-                  </div>
-                </div>
-
-                {/* Section 3 — Aksi */}
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  {canTambahObat && canUsulkan ? (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => openTambahObat(row)}
-                      className="rounded-[4px] border border-dashed border-accent-yellow/70 px-3 py-1.5 text-[13px] font-semibold text-accent-yellow hover:bg-accent-yellow/10 disabled:opacity-50"
-                    >
-                      + Data Obat
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <div className="flex flex-wrap justify-end gap-2">
-                    {canUsulkan ? (
-                      <button
-                        type="button"
-                        disabled={busy || !selectedKode}
-                        onClick={() => handlePilih(row)}
-                        className="inline-flex items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
-                      >
-                        {busy && <SubmitSpinner className="h-3.5 w-3.5" />}
-                        Ajukan
-                      </button>
-                    ) : null}
-                    {canUsulkan ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => handleSkip(row.kode_pbf)}
-                        className="rounded-[4px] border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
-                      >
-                        No Data
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </article>
+              <MatchingActionCard
+                key={card.board_key}
+                card={card}
+                inisialPbf={selectedPbf?.inisial}
+                katalog={katalog}
+                selectedKode={selectedKode}
+                selectedMeta={selectedMeta}
+                onSelect={(kode) => handleSelect(kodePbf, kode)}
+                onAjukan={() => handleAjukan(card)}
+                onNoData={() => handleNoData(card)}
+                onTambahObat={() => openTambahObat(card)}
+                onBatalkan={() => handleBatalkan(card)}
+                onSetujui={() => handleSetujui(card)}
+                busy={submittingKey === card.board_key}
+                canUsulkan={canUsulkan}
+                canTambahObat={canTambahObat}
+                isOwner={isOwner}
+              />
             );
           })}
         </div>
       )}
 
-      {pbfId && !loading && items.length < totalUnmatched && (
+      {pbfId && !loading && cards.length < totalCards ? (
         <button
           type="button"
           disabled={loadingMore}
-          onClick={() =>
-            loadKandidat(pbfId, { append: true, nextOffset: offset })
-          }
+          onClick={() => loadBoard(pbfId, { append: true, nextOffset: offset })}
           className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle px-3 py-2 text-[13px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
         >
           {loadingMore && <SubmitSpinner className="h-3.5 w-3.5" />}
-          Muat lagi ({items.length}/{totalUnmatched})
+          Muat lagi ({cards.length}/{totalCards})
         </button>
-      )}
+      ) : null}
 
       {tambahRow ? (
         <TambahObatDariMatchingModal

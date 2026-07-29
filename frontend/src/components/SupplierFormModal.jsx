@@ -173,6 +173,25 @@ export default function SupplierFormModal({
           placeholder="Alamat PBF"
         />
 
+        <label className="block space-y-0.5">
+          <span className="text-[11px] leading-none text-text-secondary">
+            Termin (hari)
+          </span>
+          <input
+            type="number"
+            name="termin_hari"
+            min={0}
+            step={1}
+            value={values.termin_hari ?? ''}
+            onChange={onChange}
+            placeholder="Contoh: 30"
+            className={inputClass}
+          />
+          <p className="text-[10px] leading-snug text-text-muted">
+            Dipakai hitung jatuh tempo tagihan (tanggal faktur + termin).
+          </p>
+        </label>
+
         <fieldset className="space-y-0.5">
           <legend className="text-[11px] leading-none text-text-secondary">Jenis PBF</legend>
           <div className="flex flex-wrap gap-1">

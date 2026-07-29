@@ -37,6 +37,7 @@ const SELECT_MATCHING = `
     konversi,
     satuan_1:ref_satuan!obat_yelo_satuan_1_id_fkey ( id, nama ),
     satuan_2:ref_satuan!obat_yelo_satuan_2_id_fkey ( id, nama ),
+    golongan:ref_golongan ( id, nama ),
     grup_substitusi:ref_grup_substitusi ( id, nama )
   ),
   supplier:supplier ( id, nama, inisial )
@@ -417,6 +418,310 @@ router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req,
   } catch (err) {
     console.error('[GET /matching/kandidat]', err);
     return res.status(500).json({ error: err.message || 'Gagal mengambil kandidat matching' });
+  }
+});
+
+/**
+ * GET /api/matching/board?pbf_id=&status=&q=
+ * status: all | match | menunggu | belum | no_match
+ * Cards:
+ *  - kind=match: grup per obat Yelo (terverifikasi) + semua baris pricelist match
+ *  - kind=pending|unmatched|rejected: 1 card per kode PBF
+ */
+router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
+  try {
+    const pbfId = normalizeText(req.query.pbf_id);
+    if (!pbfId) {
+      return res.status(400).json({ error: 'pbf_id wajib diisi' });
+    }
+
+    const statusFilter = normalizeText(req.query.status) || 'all';
+    const allowed = new Set(['all', 'match', 'menunggu', 'belum', 'no_match']);
+    if (!allowed.has(statusFilter)) {
+      return res.status(400).json({ error: 'status filter tidak valid' });
+    }
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const limitRaw = parseInt(String(req.query.limit || '40'), 10);
+    const offsetRaw = parseInt(String(req.query.offset || '0'), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(100, Math.max(1, limitRaw)) : 40;
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
+
+    const { data: supplier, error: supplierError } = await supabase
+      .from('supplier')
+      .select('id, nama, inisial')
+      .eq('id', pbfId)
+      .maybeSingle();
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: 'PBF tidak ditemukan' });
+    }
+
+    const needMatch = statusFilter === 'all' || statusFilter === 'match';
+    const needPending = statusFilter === 'all' || statusFilter === 'menunggu';
+    const needUnmatched = statusFilter === 'all' || statusFilter === 'belum';
+    const needRejected = statusFilter === 'all' || statusFilter === 'no_match';
+    const needActionCards = needPending || needUnmatched || needRejected;
+
+    const { loadLatestStokRingkasanMap } = require('../lib/stokRingkasan');
+
+    // Data dasar selalu; stok/supplier-all hanya bila perlu card Match
+    const [latest, matchings, cacheInfo, stokMap] = await Promise.all([
+      fetchLatestPricelistByPbf(pbfId),
+      fetchAllRows(() =>
+        supabase
+          .from('matching')
+          .select(SELECT_MATCHING)
+          .eq('pricelist_pbf_id', pbfId)
+      ),
+      needActionCards
+        ? fetchCacheMap(pbfId)
+        : Promise.resolve({ map: new Map(), newest: null }),
+      needMatch
+        ? loadLatestStokRingkasanMap().catch(() => new Map())
+        : Promise.resolve(new Map()),
+    ]);
+
+    // Active matching per kode for this PBF (prefer terverifikasi > menunggu > ditolak skip)
+    const byKode = new Map();
+    for (const row of matchings) {
+      const prev = byKode.get(row.pricelist_kode_pbf);
+      if (!prev) {
+        byKode.set(row.pricelist_kode_pbf, row);
+        continue;
+      }
+      const rank = (s) =>
+        s === 'terverifikasi' ? 3 : s === 'menunggu_verifikasi' ? 2 : s === 'ditolak' ? 1 : 0;
+      if (rank(row.status) > rank(prev.status)) {
+        byKode.set(row.pricelist_kode_pbf, row);
+      }
+    }
+
+    // Match groups: obat Yelo that have terverifikasi on this PBF
+    const yeloCodesNeeded = new Set();
+    for (const row of matchings) {
+      if (row.status === 'terverifikasi' && row.kode_obat_yelo) {
+        yeloCodesNeeded.add(row.kode_obat_yelo);
+      }
+    }
+
+    // Counts murah (tanpa scoring kandidat / cross-PBF enrich)
+    let countMenunggu = 0;
+    let countBelum = 0;
+    let countNoMatch = 0;
+    for (const row of latest) {
+      const m = byKode.get(row.kode_pbf);
+      if (m?.status === 'terverifikasi') continue;
+      if (m?.status === 'menunggu_verifikasi') countMenunggu += 1;
+      else if (m?.status === 'ditolak' && !m.kode_obat_yelo) countNoMatch += 1;
+      else countBelum += 1;
+    }
+    const counts = {
+      match: yeloCodesNeeded.size,
+      menunggu: countMenunggu,
+      belum: countBelum,
+      no_match: countNoMatch,
+    };
+
+    // --- Match cards (hanya bila filter butuh) ---
+    const matchCards = [];
+    if (needMatch && yeloCodesNeeded.size) {
+      const codes = [...yeloCodesNeeded];
+      const crossMatchings = await fetchAllRows(() =>
+        supabase
+          .from('matching')
+          .select(SELECT_MATCHING)
+          .eq('status', 'terverifikasi')
+          .in('kode_obat_yelo', codes)
+      );
+
+      const needPl = new Map(); // pbfId -> Set(kode)
+      for (const row of crossMatchings) {
+        if (!needPl.has(row.pricelist_pbf_id)) needPl.set(row.pricelist_pbf_id, new Set());
+        needPl.get(row.pricelist_pbf_id).add(row.pricelist_kode_pbf);
+      }
+      const plLookup = new Map(); // `${pbfId}::${kode}` -> row
+      await Promise.all(
+        [...needPl.entries()].map(async ([id, kodeSet]) => {
+          const rows = await fetchLatestPricelistByPbf(id);
+          for (const r of rows) {
+            if (kodeSet.has(r.kode_pbf)) plLookup.set(`${id}::${r.kode_pbf}`, r);
+          }
+        })
+      );
+
+      const obatByKode = new Map();
+      for (const row of crossMatchings) {
+        if (row.obat?.kode_obat) obatByKode.set(row.obat.kode_obat, row.obat);
+      }
+
+      for (const kodeObat of yeloCodesNeeded) {
+        const obat = obatByKode.get(kodeObat) || { kode_obat: kodeObat, nama_obat: kodeObat };
+        const lines = crossMatchings
+          .filter((m) => m.kode_obat_yelo === kodeObat)
+          .map((m) => {
+            const pl = plLookup.get(`${m.pricelist_pbf_id}::${m.pricelist_kode_pbf}`);
+            const sup = m.supplier;
+            return {
+              matching_id: m.id,
+              pricelist_pbf_id: m.pricelist_pbf_id,
+              pricelist_kode_pbf: m.pricelist_kode_pbf,
+              inisial: sup?.inisial || null,
+              nama_barang: pl?.nama_barang || m.pricelist_kode_pbf,
+              satuan: pl?.satuan || null,
+              qty: pl?.qty ?? null,
+              harga_dasar: pl?.harga_dasar ?? null,
+              catatan_kondisi: pl?.catatan_kondisi || null,
+            };
+          });
+
+        const stok = stokMap.get(kodeObat) || null;
+        matchCards.push({
+          kind: 'match',
+          board_key: `match:${kodeObat}`,
+          status: 'terverifikasi',
+          obat: {
+            ...obat,
+            golongan: obat.golongan || null,
+            harga_1: stok?.harga_1 ?? null,
+            harga_3: stok?.harga_3 ?? null,
+          },
+          pricelist_rows: lines,
+        });
+      }
+    }
+
+    // --- Action cards: shell dulu (tanpa kandidat), hydrate hanya untuk halaman ---
+    const pendingCards = [];
+    const unmatchedCards = [];
+    const rejectedCards = [];
+
+    if (needActionCards) {
+      for (const row of latest) {
+        const m = byKode.get(row.kode_pbf);
+        if (m?.status === 'terverifikasi') continue;
+
+        if (m?.status === 'menunggu_verifikasi') {
+          if (needPending) {
+            pendingCards.push({
+              kind: 'pending',
+              board_key: `pending:${row.kode_pbf}`,
+              status: 'menunggu_verifikasi',
+              matching_id: m.id,
+              pricelist: { ...row, pbf_id: pbfId },
+              selected_obat: m.obat || null,
+              kode_obat_yelo: m.kode_obat_yelo,
+              kandidat: null,
+            });
+          }
+          continue;
+        }
+
+        if (m?.status === 'ditolak' && !m.kode_obat_yelo) {
+          if (needRejected) {
+            rejectedCards.push({
+              kind: 'rejected',
+              board_key: `rejected:${row.kode_pbf}`,
+              status: 'ditolak',
+              matching_id: m.id,
+              pricelist: { ...row, pbf_id: pbfId },
+              selected_obat: null,
+              kode_obat_yelo: null,
+              kandidat: null,
+            });
+          }
+          continue;
+        }
+
+        if (needUnmatched) {
+          unmatchedCards.push({
+            kind: 'unmatched',
+            board_key: `unmatched:${row.kode_pbf}`,
+            status: 'belum',
+            matching_id: m?.status === 'ditolak' ? m.id : null,
+            pricelist: { ...row, pbf_id: pbfId },
+            selected_obat: null,
+            kode_obat_yelo: null,
+            kandidat: null,
+          });
+        }
+      }
+    }
+
+    function matchesQuery(card) {
+      if (!q) return true;
+      if (card.kind === 'match') {
+        const name = String(card.obat?.nama_obat || '').toLowerCase();
+        const kode = String(card.obat?.kode_obat || '').toLowerCase();
+        if (name.includes(q) || kode.includes(q)) return true;
+        return (card.pricelist_rows || []).some((r) =>
+          String(r.nama_barang || '').toLowerCase().includes(q)
+        );
+      }
+      const nama = String(card.pricelist?.nama_barang || '').toLowerCase();
+      const kode = String(card.pricelist?.kode_pbf || '').toLowerCase();
+      return nama.includes(q) || kode.includes(q);
+    }
+
+    let cards = [];
+    if (needMatch) cards.push(...matchCards);
+    if (needPending) cards.push(...pendingCards);
+    if (needUnmatched) cards.push(...unmatchedCards);
+    if (needRejected) cards.push(...rejectedCards);
+
+    cards = cards.filter(matchesQuery);
+
+    // Sort: match A-Z obat, then pending/unmatched/rejected A-Z nama barang
+    cards.sort((a, b) => {
+      const rank = (c) =>
+        c.kind === 'match' ? 0 : c.kind === 'pending' ? 1 : c.kind === 'unmatched' ? 2 : 3;
+      const dr = rank(a) - rank(b);
+      if (dr !== 0) return dr;
+      const na =
+        a.kind === 'match'
+          ? a.obat?.nama_obat
+          : a.pricelist?.nama_barang;
+      const nb =
+        b.kind === 'match'
+          ? b.obat?.nama_obat
+          : b.pricelist?.nama_barang;
+      return String(na || '').localeCompare(String(nb || ''), 'id', {
+        sensitivity: 'base',
+      });
+    });
+
+    const total = cards.length;
+    const page = cards.slice(offset, offset + limit);
+
+    // Scoring kandidat hanya untuk baris di halaman ini (bukan seluruh pricelist)
+    let obatListForScore = null;
+    async function kandidatFor(row) {
+      const cached = cacheInfo.map.get(row.kode_pbf);
+      if (cached?.kandidat?.length) return cached.kandidat;
+      if (!obatListForScore) obatListForScore = await fetchAllObatYeloLight();
+      return scoreCandidates(row.nama_barang, obatListForScore);
+    }
+
+    await Promise.all(
+      page.map(async (card) => {
+        if (card.kind === 'match' || !card.pricelist) return;
+        card.kandidat = await kandidatFor(card.pricelist);
+      })
+    );
+
+    return res.json({
+      supplier,
+      filter: statusFilter,
+      q: q || null,
+      counts,
+      total,
+      offset,
+      limit,
+      cache_dihitung_pada: cacheInfo.newest,
+      cards: page,
+    });
+  } catch (err) {
+    console.error('[GET /matching/board]', err);
+    return res.status(500).json({ error: err.message || 'Gagal mengambil board matching' });
   }
 });
 
@@ -974,6 +1279,38 @@ router.put(
   } catch (err) {
     console.error('[PUT /matching/:id/verifikasi]', err);
     return res.status(500).json({ error: 'Gagal memverifikasi matching' });
+  }
+});
+
+/**
+ * DELETE /api/matching/:id/batal
+ * Batalkan pengajuan menunggu_verifikasi → item kembali ke antrean belum match.
+ */
+router.delete('/:id/batal', requireMenuAksi('matching', 'usulkan'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: existing, error: findError } = await supabase
+      .from('matching')
+      .select('id, status')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (findError) throw findError;
+    if (!existing) {
+      return res.status(404).json({ error: 'Matching tidak ditemukan' });
+    }
+    if (existing.status !== 'menunggu_verifikasi') {
+      return res.status(400).json({
+        error: 'Hanya pengajuan menunggu verifikasi yang bisa dibatalkan',
+      });
+    }
+
+    const { error } = await supabase.from('matching').delete().eq('id', id);
+    if (error) throw error;
+    return res.status(204).send();
+  } catch (err) {
+    console.error('[DELETE /matching/:id/batal]', err);
+    return res.status(500).json({ error: err.message || 'Gagal membatalkan matching' });
   }
 });
 

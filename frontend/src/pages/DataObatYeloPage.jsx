@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { SlidersHorizontal } from 'lucide-react';
 import {
   createObatYelo,
@@ -133,6 +134,8 @@ export default function DataObatYeloPage() {
   const canTambah = hasAccess('data-obat-yelo', 'tambah');
   const canEdit = hasAccess('data-obat-yelo', 'edit');
   const canHapus = hasAccess('data-obat-yelo', 'hapus');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editFromUrlConsumed = useRef(false);
   const [items, setItems] = useState([]);
   const [supplierMap, setSupplierMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -467,6 +470,22 @@ export default function DataObatYeloPage() {
         .catch((err) => showToast(err.message || 'Gagal memuat supplier'));
     }
   }
+
+  // Deep-link dari card Match: /data-obat-yelo?edit=KODE
+  useEffect(() => {
+    if (loading || !canEdit || editFromUrlConsumed.current) return;
+    const kode = searchParams.get('edit');
+    if (!kode) return;
+    const obat = items.find((o) => o.kode_obat === kode);
+    if (!obat) return;
+    editFromUrlConsumed.current = true;
+    openEdit(obat);
+    const next = new URLSearchParams(searchParams);
+    next.delete('edit');
+    setSearchParams(next, { replace: true });
+    // openEdit sengaja tidak di deps — hanya jalan sekali per kode URL
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, items, searchParams, canEdit, supplierMap, setSearchParams]);
 
   function closeForm() {
     if (submitting) return;
