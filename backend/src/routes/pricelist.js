@@ -16,6 +16,11 @@ const {
   updateUploadSession,
   consumeUploadSession,
 } = require('../lib/uploadSessions');
+const { extractTanggalPricelist } = require('../lib/pricelistTanggal');
+const {
+  isSbsMonthlyPricelistPdf,
+  extractSbsMonthlyPricelist,
+} = require('../lib/sbsMonthlyPricelist');
 const {
   requireAuth,
   requireApproved,
@@ -85,6 +90,20 @@ function mappingFromBody(body) {
     nama_kolom_satuan: normalizeText(body?.nama_kolom_satuan),
     baris_mulai_data: normalizeBaris(body?.baris_mulai_data),
   };
+}
+
+async function fetchAllPricelistRows(buildQuery, pageSize = 1000) {
+  const all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    all.push(...chunk);
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
 }
 
 async function getSupplier(pbfId) {
@@ -162,6 +181,8 @@ function buildPreviewSessionPayload({
   items,
   diuploadOleh,
   pages = null,
+  tanggalPricelist = null,
+  jenisDokumen = null,
 }) {
   return {
     kind: 'preview',
@@ -172,34 +193,78 @@ function buildPreviewSessionPayload({
     supplierInisial: supplier.inisial,
     scaleBy1000: false,
     pages,
+    tanggalPricelist: tanggalPricelist || null,
+    jenisDokumen: jenisDokumen || null,
   };
 }
 
-async function fetchLatestByKode(pbfId) {
-  const { data, error } = await supabase
-    .from('pricelist')
-    .select('*')
-    .eq('pbf_id', pbfId)
-    .order('tanggal_upload', { ascending: false })
-    .order('id', { ascending: false });
+/** Skor sumber diskon: utamakan jenis harga + tanggal_pricelist lebih baru. */
+function diskonSourceScore(row) {
+  if (!row || row.diskon == null || String(row.diskon).trim() === '') return -1;
+  const jenisBoost = row.jenis_dokumen === 'harga' ? 1e15 : 0;
+  const tPl = row.tanggal_pricelist ? Date.parse(`${row.tanggal_pricelist}T00:00:00Z`) : 0;
+  const tUp = row.tanggal_upload ? Date.parse(row.tanggal_upload) : 0;
+  return jenisBoost + (Number.isFinite(tPl) ? tPl : 0) * 1000 + (Number.isFinite(tUp) ? tUp : 0);
+}
 
-  if (error) throw error;
+async function fetchLatestDiskonByKode(pbfId) {
+  let data;
+  try {
+    data = await fetchAllPricelistRows(() =>
+      supabase
+        .from('pricelist')
+        .select(
+          'kode_pbf, diskon, catatan_kondisi, tanggal_pricelist, tanggal_upload, jenis_dokumen, dihapus_pada'
+        )
+        .eq('pbf_id', pbfId)
+    );
+  } catch (err) {
+    if (/diskon|jenis_dokumen/i.test(err.message || '')) {
+      return new Map();
+    }
+    throw err;
+  }
 
   const map = new Map();
   for (const row of data || []) {
+    if (row.dihapus_pada) continue;
+    const score = diskonSourceScore(row);
+    if (score < 0) continue;
+    const prev = map.get(row.kode_pbf);
+    if (!prev || score > prev.__score) {
+      map.set(row.kode_pbf, { ...row, __score: score });
+    }
+  }
+  return map;
+}
+
+async function fetchLatestByKode(pbfId) {
+  const data = await fetchAllPricelistRows(() =>
+    supabase
+      .from('pricelist')
+      .select('*')
+      .eq('pbf_id', pbfId)
+      .order('tanggal_upload', { ascending: false })
+      .order('id', { ascending: false })
+  );
+
+  const map = new Map();
+  for (const row of data || []) {
+    if (row.dihapus_pada) continue;
     if (!map.has(row.kode_pbf)) map.set(row.kode_pbf, row);
   }
   return map;
 }
 
 async function fetchNamaToKode(pbfId) {
-  const { data, error } = await supabase
-    .from('pricelist')
-    .select('nama_barang, kode_pbf, tanggal_upload')
-    .eq('pbf_id', pbfId)
-    .order('tanggal_upload', { ascending: false });
-
-  if (error) throw error;
+  const data = await fetchAllPricelistRows(() =>
+    supabase
+      .from('pricelist')
+      .select('nama_barang, kode_pbf, tanggal_upload')
+      .eq('pbf_id', pbfId)
+      .order('tanggal_upload', { ascending: false })
+      .order('id', { ascending: false })
+  );
 
   const map = new Map();
   for (const row of data || []) {
@@ -211,12 +276,9 @@ async function fetchNamaToKode(pbfId) {
 }
 
 async function nextSeq(pbfId, inisial) {
-  const { data, error } = await supabase
-    .from('pricelist')
-    .select('kode_pbf')
-    .eq('pbf_id', pbfId);
-
-  if (error) throw error;
+  const data = await fetchAllPricelistRows(() =>
+    supabase.from('pricelist').select('kode_pbf').eq('pbf_id', pbfId)
+  );
 
   let max = 0;
   for (const row of data || []) {
@@ -225,65 +287,166 @@ async function nextSeq(pbfId, inisial) {
   return max + 1;
 }
 
-async function persistPricelistInserts({ pbfId, supplier, items, diuploadOleh }) {
+async function persistPricelistInserts({
+  pbfId,
+  supplier,
+  items,
+  diuploadOleh,
+  tanggalPricelist = null,
+  jenisDokumen = null,
+}) {
   const namaToKode = await fetchNamaToKode(pbfId);
   const latestBefore = await fetchLatestByKode(pbfId);
+  const latestDiskon = await fetchLatestDiskonByKode(pbfId);
   let seq = await nextSeq(pbfId, supplier.inisial);
+
+  // Semua kode yang sudah pernah dipakai (hindari reuse bentrok)
+  const usedKodes = new Set([
+    ...namaToKode.values(),
+    ...latestBefore.keys(),
+  ]);
+  const existingKodeRows = await fetchAllPricelistRows(() =>
+    supabase.from('pricelist').select('kode_pbf').eq('pbf_id', pbfId)
+  );
+  for (const row of existingKodeRows || []) {
+    if (row.kode_pbf) usedKodes.add(row.kode_pbf);
+  }
+
+  function allocKode() {
+    let kode = formatKode(supplier.inisial, seq);
+    while (usedKodes.has(kode)) {
+      seq += 1;
+      kode = formatKode(supplier.inisial, seq);
+    }
+    seq += 1;
+    usedKodes.add(kode);
+    return kode;
+  }
 
   const uploadAt = new Date().toISOString();
   const inserts = [];
   const kodeInUpload = new Set();
+  const kodeOwnerInUpload = new Map(); // kode → nama key
   let barangBaru = 0;
+  const jenis =
+    jenisDokumen === 'harga' || jenisDokumen === 'stok' ? jenisDokumen : null;
 
   for (const item of items) {
     const key = item.nama_barang.trim().toLowerCase();
-    let kode = namaToKode.get(key);
+    let kode = namaToKode.get(key) || null;
+    // Kode dari history sudah dipakai nama lain di upload ini → alokasi baru
+    if (kode && kodeOwnerInUpload.has(kode) && kodeOwnerInUpload.get(kode) !== key) {
+      kode = null;
+    }
     if (!kode) {
-      kode = formatKode(supplier.inisial, seq);
-      seq += 1;
+      kode = allocKode();
       namaToKode.set(key, kode);
       barangBaru += 1;
     }
     kodeInUpload.add(kode);
+    kodeOwnerInUpload.set(kode, key);
+
+    const prev = latestBefore.get(kode) || null;
+    const discPrev = latestDiskon.get(kode) || prev;
+
+    let qty = item.qty;
+    let qtyEstimasi = Boolean(item.qty_estimasi);
+    let harga = item.harga_dasar;
+    let diskon =
+      item.diskon != null && String(item.diskon).trim() !== ''
+        ? String(item.diskon).trim()
+        : null;
+    let catatan = item.catatan_kondisi ?? null;
+
+    if (jenis === 'harga') {
+      // Harga+diskon dari PL bulanan.
+      // Qty: "*" (qty < 10) → estimasi dari file; tanpa bintang → warisi stok terakhir.
+      if (qty == null && prev) {
+        qty = prev.qty;
+        qtyEstimasi = Boolean(prev.qty_estimasi);
+      }
+      if (!catatan && diskon) catatan = diskon;
+    } else if (jenis === 'stok') {
+      // Qty+harga dari stok harian; diskon warisi PL harga terbaru
+      if (!diskon && discPrev?.diskon) {
+        diskon = String(discPrev.diskon).trim();
+        catatan = discPrev.catatan_kondisi || diskon;
+      } else if (!catatan && prev?.catatan_kondisi) {
+        // Fallback tanpa kolom diskon: warisi catatan (skema disc) dari baris terakhir
+        catatan = prev.catatan_kondisi;
+      }
+    } else if (!diskon && discPrev?.diskon) {
+      diskon = String(discPrev.diskon).trim();
+    } else if (!catatan && prev?.catatan_kondisi && !item.catatan_kondisi) {
+      catatan = prev.catatan_kondisi;
+    }
 
     inserts.push({
       pbf_id: pbfId,
       kode_pbf: kode,
       nama_barang: item.nama_barang.trim(),
       satuan: item.satuan || null,
-      qty: item.qty,
-      qty_estimasi: Boolean(item.qty_estimasi),
-      harga_dasar: item.harga_dasar,
-      catatan_kondisi: item.catatan_kondisi,
+      qty,
+      qty_estimasi: qtyEstimasi,
+      harga_dasar: harga,
+      catatan_kondisi: catatan,
+      diskon,
+      jenis_dokumen: jenis,
       tanggal_upload: uploadAt,
+      tanggal_pricelist: tanggalPricelist || null,
       diupload_oleh: diuploadOleh,
       auto_kosong: false,
     });
   }
 
   let autoKosong = 0;
-  for (const [kode, last] of latestBefore.entries()) {
-    if (kodeInUpload.has(kode)) continue;
-    inserts.push({
-      pbf_id: pbfId,
-      kode_pbf: kode,
-      nama_barang: last.nama_barang,
-      satuan: last.satuan,
-      qty: 0,
-      qty_estimasi: false,
-      harga_dasar: last.harga_dasar,
-      catatan_kondisi: last.catatan_kondisi,
-      tanggal_upload: uploadAt,
-      diupload_oleh: diuploadOleh,
-      auto_kosong: true,
-    });
-    autoKosong += 1;
+  // Daftar harga bulanan tidak menandai barang hilang (bukan stok); jangan qty=0
+  if (jenis !== 'harga') {
+    for (const [kode, last] of latestBefore.entries()) {
+      if (kodeInUpload.has(kode)) continue;
+      const discPrev = latestDiskon.get(kode) || last;
+      const diskon = discPrev?.diskon ?? last.diskon ?? null;
+      inserts.push({
+        pbf_id: pbfId,
+        kode_pbf: kode,
+        nama_barang: last.nama_barang,
+        satuan: last.satuan,
+        qty: 0,
+        qty_estimasi: false,
+        harga_dasar: last.harga_dasar,
+        catatan_kondisi: discPrev?.catatan_kondisi || last.catatan_kondisi,
+        diskon,
+        jenis_dokumen: jenis,
+        tanggal_upload: uploadAt,
+        tanggal_pricelist: tanggalPricelist || null,
+        diupload_oleh: diuploadOleh,
+        auto_kosong: true,
+      });
+      autoKosong += 1;
+    }
   }
 
   const chunkSize = 200;
   for (let i = 0; i < inserts.length; i += chunkSize) {
     const chunk = inserts.slice(i, i + chunkSize);
-    const { error } = await supabase.from('pricelist').insert(chunk);
+    let { error } = await supabase.from('pricelist').insert(chunk);
+    if (error && /tanggal_pricelist|diskon|jenis_dokumen/i.test(error.message || '')) {
+      // Migrasi kolom baru belum dijalankan — strip bertahap
+      const stripped = chunk.map((row) => {
+        const next = { ...row };
+        if (/tanggal_pricelist/i.test(error.message || '')) delete next.tanggal_pricelist;
+        if (/diskon/i.test(error.message || '')) delete next.diskon;
+        if (/jenis_dokumen/i.test(error.message || '')) delete next.jenis_dokumen;
+        return next;
+      });
+      ({ error } = await supabase.from('pricelist').insert(stripped));
+      if (error && /tanggal_pricelist|diskon|jenis_dokumen/i.test(error.message || '')) {
+        const stripped2 = chunk.map(
+          ({ tanggal_pricelist: _t, diskon: _d, jenis_dokumen: _j, ...rest }) => rest
+        );
+        ({ error } = await supabase.from('pricelist').insert(stripped2));
+      }
+    }
     if (error) throw error;
   }
 
@@ -291,15 +454,291 @@ async function persistPricelistInserts({ pbfId, supplier, items, diuploadOleh })
     baris_diproses: items.length,
     barang_baru: barangBaru,
     auto_kosong: autoKosong,
+    tanggal_pricelist: tanggalPricelist || null,
+    jenis_dokumen: jenis,
   };
 }
 
-// GET /api/pricelist?pbf_id=
+/**
+ * GET /api/pricelist/uploads
+ * Riwayat batch: { pbf_id, inisial, nama, tanggal_upload, tanggal_pricelist, item_count }
+ * Urut: tanggal_pricelist (fallback tanggal upload) DESC, lalu inisial A-Z.
+ */
+router.get('/uploads', requireMenuAksi('pricelist-pbf', 'lihat'), async (_req, res) => {
+  try {
+    let rows;
+    try {
+      rows = await fetchAllPricelistRows(() =>
+        supabase
+          .from('pricelist')
+          .select('pbf_id, tanggal_upload, tanggal_pricelist, auto_kosong, dihapus_pada')
+      );
+    } catch (colErr) {
+      const msg = colErr.message || '';
+      if (/dihapus_pada/i.test(msg) && /tanggal_pricelist/i.test(msg)) {
+        rows = await fetchAllPricelistRows(() =>
+          supabase.from('pricelist').select('pbf_id, tanggal_upload, auto_kosong')
+        );
+      } else if (/dihapus_pada/i.test(msg)) {
+        try {
+          rows = await fetchAllPricelistRows(() =>
+            supabase
+              .from('pricelist')
+              .select('pbf_id, tanggal_upload, tanggal_pricelist, auto_kosong')
+          );
+        } catch (colErr2) {
+          if (!/tanggal_pricelist/i.test(colErr2.message || '')) throw colErr2;
+          rows = await fetchAllPricelistRows(() =>
+            supabase.from('pricelist').select('pbf_id, tanggal_upload, auto_kosong')
+          );
+        }
+      } else if (/tanggal_pricelist/i.test(msg)) {
+        rows = await fetchAllPricelistRows(() =>
+          supabase
+            .from('pricelist')
+            .select('pbf_id, tanggal_upload, auto_kosong, dihapus_pada')
+        );
+      } else {
+        throw colErr;
+      }
+    }
+
+    const counts = new Map(); // `${pbfId}::${tanggal}` -> batch
+    for (const row of rows) {
+      if (!row?.pbf_id || !row?.tanggal_upload) continue;
+      if (row.dihapus_pada) continue;
+      const key = `${row.pbf_id}::${row.tanggal_upload}`;
+      let slot = counts.get(key);
+      if (!slot) {
+        slot = {
+          pbf_id: row.pbf_id,
+          tanggal_upload: row.tanggal_upload,
+          tanggal_pricelist: row.tanggal_pricelist || null,
+          item_count: 0,
+          file_count: 0,
+        };
+        counts.set(key, slot);
+      }
+      slot.item_count += 1;
+      if (!row.auto_kosong) slot.file_count += 1;
+      if (!slot.tanggal_pricelist && row.tanggal_pricelist) {
+        slot.tanggal_pricelist = row.tanggal_pricelist;
+      }
+    }
+
+    const { data: suppliers, error: supErr } = await supabase
+      .from('supplier')
+      .select('id, nama, inisial');
+    if (supErr) throw supErr;
+    const byId = new Map((suppliers || []).map((s) => [s.id, s]));
+
+    function sortDateKey(batch) {
+      if (batch.tanggal_pricelist) return String(batch.tanggal_pricelist).slice(0, 10);
+      // Fallback data lama: pakai tanggal kalender dari waktu upload (UTC)
+      const raw = String(batch.tanggal_upload || '');
+      if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+      try {
+        return new Date(raw).toISOString().slice(0, 10);
+      } catch {
+        return '';
+      }
+    }
+
+    const list = [...counts.values()].map((batch) => {
+      const sup = byId.get(batch.pbf_id);
+      const tanggalPricelist = batch.tanggal_pricelist
+        ? String(batch.tanggal_pricelist).slice(0, 10)
+        : null;
+      return {
+        pbf_id: batch.pbf_id,
+        nama: sup?.nama || null,
+        inisial: sup?.inisial || '—',
+        tanggal_upload: batch.tanggal_upload,
+        tanggal_pricelist: tanggalPricelist,
+        // Item dari file (bukan baris auto kosong)
+        item_count: batch.file_count > 0 ? batch.file_count : batch.item_count,
+        _sort_date: sortDateKey(batch),
+      };
+    });
+
+    list.sort((a, b) => {
+      const ta = a._sort_date || '';
+      const tb = b._sort_date || '';
+      if (ta !== tb) return tb.localeCompare(ta);
+      return String(a.inisial || '').localeCompare(String(b.inisial || ''), 'id', {
+        sensitivity: 'base',
+      });
+    });
+
+    return res.json(list.map(({ _sort_date, ...rest }) => rest));
+  } catch (err) {
+    console.error('[GET /pricelist/uploads]', err);
+    return res.status(500).json({ error: 'Gagal mengambil riwayat upload pricelist' });
+  }
+});
+
+/**
+ * Soft-delete batch pricelist: kosongkan qty/harga (isi file), set dihapus_pada.
+ * Tidak menghapus kode/nama obat PBF (baris tetap) maupun tabel matching.
+ * Body: { pbf_id, tanggal_upload }
+ * (POST dipakai karena DELETE+body sering bermasalah di proxy/browser.)
+ */
+async function softDeletePricelistUpload(req, res) {
+  try {
+    const pbfId = normalizeText(req.body?.pbf_id ?? req.query?.pbf_id);
+    const tanggalUpload = normalizeText(
+      req.body?.tanggal_upload ?? req.query?.tanggal_upload
+    );
+    if (!pbfId) {
+      return res.status(400).json({ error: 'pbf_id wajib diisi' });
+    }
+    if (!tanggalUpload) {
+      return res.status(400).json({ error: 'tanggal_upload wajib diisi' });
+    }
+
+    const waktuVariants = [];
+    const pushVariant = (v) => {
+      const s = normalizeText(v);
+      if (s && !waktuVariants.includes(s)) waktuVariants.push(s);
+    };
+    pushVariant(tanggalUpload);
+    const parsed = Date.parse(tanggalUpload);
+    if (Number.isFinite(parsed)) {
+      const iso = new Date(parsed).toISOString();
+      pushVariant(iso);
+      pushVariant(iso.replace(/Z$/, '+00:00'));
+    }
+
+    let matchedUpload = null;
+    let probeErr = null;
+    for (const waktu of waktuVariants) {
+      const { data: existing, error: findErr } = await supabase
+        .from('pricelist')
+        .select('id, tanggal_upload')
+        .eq('pbf_id', pbfId)
+        .eq('tanggal_upload', waktu)
+        .is('dihapus_pada', null)
+        .limit(1);
+      if (findErr) {
+        probeErr = findErr;
+        if (/dihapus_pada/i.test(findErr.message || '')) {
+          return res.status(503).json({
+            error:
+              'Kolom dihapus_pada belum ada — jalankan migrasi pricelist_dihapus_pada di Supabase',
+          });
+        }
+        continue;
+      }
+      if (existing?.length) {
+        matchedUpload = existing[0].tanggal_upload || waktu;
+        break;
+      }
+    }
+
+    if (!matchedUpload) {
+      if (probeErr) {
+        console.error('[softDeletePricelistUpload] probe', probeErr);
+        return res.status(500).json({
+          error: probeErr.message || 'Gagal mencari batch pricelist',
+        });
+      }
+      return res.status(404).json({
+        error: 'Batch pricelist tidak ditemukan atau sudah dihapus',
+      });
+    }
+
+    const dihapusPada = new Date().toISOString();
+
+    // Ambil semua id (paginated) lalu update per chunk — hindari timeout/max-rows
+    const allIds = [];
+    {
+      const pageSize = 1000;
+      let from = 0;
+      for (;;) {
+        const { data: page, error: pageErr } = await supabase
+          .from('pricelist')
+          .select('id')
+          .eq('pbf_id', pbfId)
+          .eq('tanggal_upload', matchedUpload)
+          .is('dihapus_pada', null)
+          .range(from, from + pageSize - 1);
+        if (pageErr) throw pageErr;
+        const chunk = page || [];
+        for (const row of chunk) allIds.push(row.id);
+        if (chunk.length < pageSize) break;
+        from += pageSize;
+      }
+    }
+
+    if (!allIds.length) {
+      return res.status(404).json({
+        error: 'Batch pricelist tidak ditemukan atau sudah dihapus',
+      });
+    }
+
+    let updated = 0;
+    const chunkSize = 150;
+    for (let i = 0; i < allIds.length; i += chunkSize) {
+      const ids = allIds.slice(i, i + chunkSize);
+      const { error: updErr } = await supabase
+        .from('pricelist')
+        .update({
+          qty: null,
+          harga_dasar: null,
+          catatan_kondisi: null,
+          dihapus_pada: dihapusPada,
+        })
+        .in('id', ids);
+      if (updErr) throw updErr;
+      updated += ids.length;
+    }
+
+    return res.json({
+      ok: true,
+      pbf_id: pbfId,
+      tanggal_upload: matchedUpload,
+      baris_dihapus: updated,
+    });
+  } catch (err) {
+    console.error('[softDeletePricelistUpload]', err);
+    return res.status(500).json({
+      error: err.message || err.details || 'Gagal menghapus batch pricelist',
+    });
+  }
+}
+
+router.post(
+  '/uploads/hapus',
+  requireMenuAksi('pricelist-pbf', 'hapus'),
+  softDeletePricelistUpload
+);
+router.delete(
+  '/uploads',
+  requireMenuAksi('pricelist-pbf', 'hapus'),
+  softDeletePricelistUpload
+);
+
+// GET /api/pricelist?pbf_id=&tanggal_upload=
+// tanpa tanggal_upload → snapshot terbaru per kode_pbf
+// dengan tanggal_upload → semua baris batch upload itu
 router.get('/', requireMenuAksi('pricelist-pbf', 'lihat'), async (req, res) => {
   try {
     const pbfId = normalizeText(req.query.pbf_id);
     if (!pbfId) {
       return res.status(400).json({ error: 'pbf_id wajib diisi' });
+    }
+
+    const tanggalUpload = normalizeText(req.query.tanggal_upload);
+    if (tanggalUpload) {
+      const list = await fetchAllPricelistRows(() =>
+        supabase
+          .from('pricelist')
+          .select('*')
+          .eq('pbf_id', pbfId)
+          .eq('tanggal_upload', tanggalUpload)
+          .order('nama_barang', { ascending: true })
+      );
+      return res.json((list || []).filter((r) => !r.dihapus_pada));
     }
 
     const latestMap = await fetchLatestByKode(pbfId);
@@ -395,6 +834,11 @@ router.post('/parse-preview', requireMenuAksi('pricelist-pbf', 'tambah'), upload
       return res.status(400).json({ error: 'Tidak ada baris data yang bisa diproses dari file' });
     }
 
+    const tanggalPricelist = extractTanggalPricelist({
+      inisial: supplier.inisial,
+      excelRows: rows,
+    });
+
     const sample = sampleFromItems(items);
     const diuploadOleh = normalizeText(req.body?.diupload_oleh);
     const sessionId = createUploadSession(
@@ -404,6 +848,7 @@ router.post('/parse-preview', requireMenuAksi('pricelist-pbf', 'tambah'), upload
         mapping,
         items,
         diuploadOleh,
+        tanggalPricelist,
       })
     );
 
@@ -490,6 +935,62 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
         ? existingTemplate
         : null;
 
+    const tanggalPricelist = extractTanggalPricelist({
+      inisial: supplier.inisial,
+      pdfPages: extracted.pages,
+    });
+
+    // SBS daftar harga bulanan (dual table + DISC) — mapping khusus, tanpa template x-range stok
+    const isSbsHarga =
+      String(supplier.inisial || '').trim().toLowerCase() === 'sbs' &&
+      isSbsMonthlyPricelistPdf(extracted.pages);
+
+    if (isSbsHarga) {
+      const formatAngka = normalizeFormatAngka(
+        existingTemplate?.format_angka || 'id'
+      );
+      const { items, warnings, jenis_dokumen } = extractSbsMonthlyPricelist(
+        extracted.pages,
+        { format_angka: formatAngka }
+      );
+      if (!items.length) {
+        return res.status(400).json({
+          error: 'Tidak ada baris data yang bisa diproses dari daftar harga SBS',
+        });
+      }
+      const mapping = {
+        tipe_sumber: 'pdf',
+        format_angka: formatAngka,
+        baris_mulai_data: 1,
+        skema: 'sbs_harga_bulanan',
+      };
+      const sessionId = createUploadSession(
+        buildPreviewSessionPayload({
+          pbfId,
+          supplier,
+          mapping,
+          items,
+          diuploadOleh,
+          pages: extracted.pages,
+          tanggalPricelist,
+          jenisDokumen: jenis_dokumen || 'harga',
+        })
+      );
+      return res.json({
+        needs_mapping: false,
+        session_id: sessionId,
+        pbf_id: pbfId,
+        mapping,
+        sample: sampleFromItems(items),
+        warnings,
+        baris_valid: items.length,
+        scale_by_1000: false,
+        sumber: 'pdf',
+        jenis_dokumen: 'harga',
+        tanggal_pricelist: tanggalPricelist,
+      });
+    }
+
     if (!pdfTemplate) {
       const sessionId = createUploadSession({
         kind: 'pdf_raw',
@@ -498,6 +999,7 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
         numPages: extracted.numPages,
         diuploadOleh,
         supplierInisial: supplier.inisial,
+        tanggalPricelist,
       });
 
       return res.json({
@@ -516,6 +1018,7 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
         ),
         baris_mulai_data: existingTemplate?.baris_mulai_data || 1,
         sumber: 'pdf',
+        tanggal_pricelist: tanggalPricelist,
       });
     }
 
@@ -544,6 +1047,11 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
         items,
         diuploadOleh,
         pages: extracted.pages,
+        tanggalPricelist,
+        jenisDokumen:
+          String(supplier.inisial || '').trim().toLowerCase() === 'sbs'
+            ? 'stok'
+            : null,
       })
     );
 
@@ -557,6 +1065,11 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
       baris_valid: items.length,
       scale_by_1000: false,
       sumber: 'pdf',
+      jenis_dokumen:
+        String(supplier.inisial || '').trim().toLowerCase() === 'sbs'
+          ? 'stok'
+          : null,
+      tanggal_pricelist: tanggalPricelist,
     });
   } catch (err) {
     console.error('[POST /pricelist/parse-pdf-preview]', err);
@@ -614,6 +1127,13 @@ router.post('/save-pdf-mapping', requireMenuAksi('pricelist-pbf', 'edit'), async
       return res.status(400).json({ error: 'Tidak ada baris data yang bisa diproses dengan mapping ini' });
     }
 
+    const tanggalPricelist =
+      rawSession.tanggalPricelist ||
+      extractTanggalPricelist({
+        inisial: supplier.inisial,
+        pdfPages: rawSession.pages,
+      });
+
     // Ganti sesi raw → preview (hapus raw)
     consumeUploadSession(sessionId);
     const previewSessionId = createUploadSession(
@@ -624,6 +1144,11 @@ router.post('/save-pdf-mapping', requireMenuAksi('pricelist-pbf', 'edit'), async
         items,
         diuploadOleh: rawSession.diuploadOleh,
         pages: rawSession.pages,
+        tanggalPricelist,
+        jenisDokumen:
+          String(supplier.inisial || '').trim().toLowerCase() === 'sbs'
+            ? 'stok'
+            : null,
       })
     );
 
@@ -638,6 +1163,10 @@ router.post('/save-pdf-mapping', requireMenuAksi('pricelist-pbf', 'edit'), async
       baris_valid: items.length,
       scale_by_1000: false,
       sumber: 'pdf',
+      jenis_dokumen:
+        String(supplier.inisial || '').trim().toLowerCase() === 'sbs'
+          ? 'stok'
+          : null,
     });
   } catch (err) {
     console.error('[POST /pricelist/save-pdf-mapping]', err);
@@ -683,17 +1212,29 @@ router.post('/confirm', requireMenuAksi('pricelist-pbf', 'tambah'), async (req, 
 
     const items = applyScaleBy1000(session.items, Boolean(session.scaleBy1000));
 
-    const template = await upsertTemplate(session.pbfId, session.mapping);
+    // Jangan timpa template mapping stok SBS saat konfirmasi daftar harga bulanan
+    let template = null;
+    const skipTemplate =
+      session.mapping?.skema === 'sbs_harga_bulanan' ||
+      session.jenisDokumen === 'harga';
+    if (!skipTemplate) {
+      template = await upsertTemplate(session.pbfId, session.mapping);
+    } else {
+      template = await getTemplate(session.pbfId);
+    }
+
     const summary = await persistPricelistInserts({
       pbfId: session.pbfId,
       supplier,
       items,
       diuploadOleh: session.diuploadOleh,
+      tanggalPricelist: session.tanggalPricelist || null,
+      jenisDokumen: session.jenisDokumen || null,
     });
 
     return res.status(201).json({
       pbf_id: session.pbfId,
-      template_id: template.id,
+      template_id: template?.id || null,
       scale_by_1000: Boolean(session.scaleBy1000),
       ...summary,
     });

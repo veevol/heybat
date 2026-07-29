@@ -10,12 +10,18 @@ const {
   fetchAllRows,
   loadLatestStokRingkasanMap,
 } = require('../lib/stokRingkasan');
+const { resolveHargaNet } = require('../lib/pricelistDiskon');
 
 const router = express.Router();
 router.use(requireAuth, requireApproved);
 
 const KATEGORI_VALID = new Set(['retail', 'mitra']);
 const TANPA_SUBSTITUSI = 'Tanpa Substitusi';
+
+const PRICELIST_SELECT =
+  'id, pbf_id, kode_pbf, nama_barang, satuan, qty, qty_estimasi, harga_dasar, diskon, catatan_kondisi, tanggal_upload';
+const PRICELIST_SELECT_LEGACY =
+  'id, pbf_id, kode_pbf, nama_barang, satuan, qty, qty_estimasi, harga_dasar, tanggal_upload';
 
 /**
  * Expand pilihan UI (retail/mitra) ke filter DB.
@@ -52,11 +58,20 @@ function isSupplierSbs(inisial, nama) {
 }
 
 /**
- * Skor Defekta PBF: harga lebih murah = skor lebih tinggi.
+ * Skor Defekta PBF: harga netto lebih murah = skor lebih tinggi.
  * Global qty < 5 → skor rendah; SBS qty_estimasi + qty <= 5 → skor rendah.
  */
-function scoreDefektaPbf({ harga_dasar, qty, qty_estimasi, inisial, nama }) {
-  const harga = Number(harga_dasar);
+function scoreDefektaPbf({
+  harga_dasar,
+  harga_net,
+  qty,
+  qty_estimasi,
+  inisial,
+  nama,
+}) {
+  const harga = Number(
+    harga_net != null && harga_net !== '' ? harga_net : harga_dasar
+  );
   let skor =
     Number.isFinite(harga) && harga > 0 ? 1_000_000 / harga : 1;
 
@@ -81,23 +96,34 @@ function scoreDefektaPbf({ harga_dasar, qty, qty_estimasi, inisial, nama }) {
 
 async function loadLatestPricelistRow(pbfId, kodePbf) {
   if (!pbfId || !kodePbf) return null;
-  const { data, error } = await supabase
-    .from('pricelist')
-    .select(
-      'id, pbf_id, kode_pbf, nama_barang, satuan, qty, qty_estimasi, harga_dasar, tanggal_upload'
-    )
-    .eq('pbf_id', pbfId)
-    .eq('kode_pbf', kodePbf)
-    .order('tanggal_upload', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return data || null;
+  try {
+    const { data, error } = await supabase
+      .from('pricelist')
+      .select(PRICELIST_SELECT)
+      .eq('pbf_id', pbfId)
+      .eq('kode_pbf', kodePbf)
+      .order('tanggal_upload', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (err) {
+    if (!/diskon|catatan_kondisi/i.test(err.message || '')) throw err;
+    const { data, error } = await supabase
+      .from('pricelist')
+      .select(PRICELIST_SELECT_LEGACY)
+      .eq('pbf_id', pbfId)
+      .eq('kode_pbf', kodePbf)
+      .order('tanggal_upload', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  }
 }
 
 /**
  * Bulk load latest pricelist per (pbf_id, kode_pbf).
- * Query per-PBF (biasanya sedikit), bukan N+1 per obat.
  * @param {Array<{ pbf_id: string, kode_pbf: string }>} pairs
  * @returns {Promise<Map<string, object>>} key = `${pbfId}\0${kodePbf}`
  */
@@ -121,15 +147,25 @@ async function loadLatestPricelistMap(pairs) {
     const kodes = [...kodeSet];
     for (let i = 0; i < kodes.length; i += 150) {
       const chunk = kodes.slice(i, i + 150);
-      const rows = await fetchAllRows(() =>
-        supabase
-          .from('pricelist')
-          .select(
-            'id, pbf_id, kode_pbf, nama_barang, satuan, qty, qty_estimasi, harga_dasar, tanggal_upload'
-          )
-          .eq('pbf_id', pbfId)
-          .in('kode_pbf', chunk)
-      );
+      let rows;
+      try {
+        rows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select(PRICELIST_SELECT)
+            .eq('pbf_id', pbfId)
+            .in('kode_pbf', chunk)
+        );
+      } catch (err) {
+        if (!/diskon|catatan_kondisi/i.test(err.message || '')) throw err;
+        rows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select(PRICELIST_SELECT_LEGACY)
+            .eq('pbf_id', pbfId)
+            .in('kode_pbf', chunk)
+        );
+      }
       for (const row of rows) {
         const key = `${row.pbf_id}\0${row.kode_pbf}`;
         const prev = map.get(key);
@@ -147,14 +183,20 @@ async function loadLatestPricelistMap(pairs) {
 
 /**
  * Hitung kandidat skor Defekta untuk banyak obat sekaligus.
- * @returns {Promise<{
- *   byKode: Map<string, Array<{ supplier_id: string, skor: number, inisial: *, nama: *, pricelist_kode_pbf: * }>>,
- * }>}
+ * @param {string[]} kodeList
+ * @param {Map<string, number|null>|object} [qtyByKode] qty_order per kode untuk skema bonus
  */
-async function buildDefektaScoresByKode(kodeList) {
+async function buildDefektaScoresByKode(kodeList, qtyByKode = null) {
   const byKode = new Map();
   const uniqueKodes = [...new Set((kodeList || []).filter(Boolean))];
   if (uniqueKodes.length === 0) return { byKode };
+
+  const qtyMap =
+    qtyByKode instanceof Map
+      ? qtyByKode
+      : qtyByKode && typeof qtyByKode === 'object'
+        ? new Map(Object.entries(qtyByKode))
+        : null;
 
   const matches = [];
   for (let i = 0; i < uniqueKodes.length; i += 150) {
@@ -201,8 +243,15 @@ async function buildDefektaScoresByKode(kodeList) {
         : null;
     const inisial = m.supplier?.inisial || null;
     const nama = m.supplier?.nama || null;
+    const qtyOrder = qtyMap?.get(kode) ?? null;
+    const net = resolveHargaNet({
+      harga_dasar: price?.harga_dasar,
+      diskon: price?.diskon || price?.catatan_kondisi,
+      qty_order: qtyOrder,
+    });
     const skor = scoreDefektaPbf({
       harga_dasar: price?.harga_dasar,
+      harga_net: net.harga_net,
       qty: price?.qty,
       qty_estimasi: price?.qty_estimasi,
       inisial,
@@ -213,6 +262,10 @@ async function buildDefektaScoresByKode(kodeList) {
       inisial,
       nama,
       pricelist_kode_pbf: m.pricelist_kode_pbf || null,
+      harga_dasar: price?.harga_dasar ?? null,
+      harga_net: net.harga_net,
+      diskon: net.diskon,
+      diskon_keterangan: net.keterangan,
       skor,
     });
   }
@@ -689,8 +742,18 @@ router.get(
       }
 
       const kodeAll = hasilRows.map((r) => r.kode_obat).filter(Boolean);
+      /** @type {Map<string, number|null>} */
+      const qtyByKode = new Map();
+      for (const row of hasilRows) {
+        if (!row.kode_obat) continue;
+        const obat = obatByKode.get(row.kode_obat) || {};
+        qtyByKode.set(
+          row.kode_obat,
+          computeQtyOrderDefekta(row.kebutuhan_beli, obat.konversi)
+        );
+      }
       const [{ byKode: skorByKode }, { pilihanListByKode }] = await Promise.all([
-        buildDefektaScoresByKode(kodeAll),
+        buildDefektaScoresByKode(kodeAll, qtyByKode),
         loadDefektaPilihanForRun(runId),
       ]);
 
@@ -932,29 +995,41 @@ router.post(
 
       const belumDipilih = listObatBelumDipilih(hasilRows, pilihanListByKode);
       const kodeBelum = belumDipilih.map((r) => r.kode_obat).filter(Boolean);
-      const [{ byKode }, obatKonversiRows] = await Promise.all([
-        buildDefektaScoresByKode(kodeBelum),
-        (async () => {
-          const all = [];
-          for (let i = 0; i < kodeBelum.length; i += 150) {
-            const chunk = kodeBelum.slice(i, i + 150);
-            const rows = await fetchAllRows(() =>
-              supabase
-                .from('obat_yelo')
-                .select('kode_obat, konversi')
-                .in('kode_obat', chunk)
-            );
-            all.push(...rows);
-          }
-          return all;
-        })(),
-      ]);
+      const obatKonversiRows = await (async () => {
+        const all = [];
+        for (let i = 0; i < kodeBelum.length; i += 150) {
+          const chunk = kodeBelum.slice(i, i + 150);
+          const rows = await fetchAllRows(() =>
+            supabase
+              .from('obat_yelo')
+              .select('kode_obat, konversi')
+              .in('kode_obat', chunk)
+          );
+          all.push(...rows);
+        }
+        return all;
+      })();
 
       /** @type {Map<string, number|null>} */
       const konversiByKode = new Map();
       for (const o of obatKonversiRows) {
         if (o.kode_obat) konversiByKode.set(o.kode_obat, o.konversi);
       }
+
+      /** @type {Map<string, number|null>} */
+      const qtyByKode = new Map();
+      for (const row of belumDipilih) {
+        if (!row.kode_obat) continue;
+        qtyByKode.set(
+          row.kode_obat,
+          computeQtyOrderDefekta(
+            row.kebutuhan_beli,
+            konversiByKode.get(row.kode_obat)
+          )
+        );
+      }
+
+      const { byKode } = await buildDefektaScoresByKode(kodeBelum, qtyByKode);
 
       const actor = actorLabel(req);
       const nowIso = new Date().toISOString();
@@ -969,10 +1044,7 @@ router.post(
           jumlah_dilewati += 1;
           continue;
         }
-        const qtyOrder = computeQtyOrderDefekta(
-          row.kebutuhan_beli,
-          konversiByKode.get(row.kode_obat)
-        );
+        const qtyOrder = qtyByKode.get(row.kode_obat) ?? null;
         toUpsert.push({
           forecast_run_id: runId,
           kode_obat: row.kode_obat,
@@ -1070,8 +1142,14 @@ router.get(
         );
         const inisial = m.supplier?.inisial || null;
         const nama = m.supplier?.nama || null;
+        const net = resolveHargaNet({
+          harga_dasar: price?.harga_dasar,
+          diskon: price?.diskon || price?.catatan_kondisi,
+          qty_order: defaultQty,
+        });
         const skor = scoreDefektaPbf({
           harga_dasar: price?.harga_dasar,
+          harga_net: net.harga_net,
           qty: price?.qty,
           qty_estimasi: price?.qty_estimasi,
           inisial,
@@ -1087,6 +1165,9 @@ router.get(
           qty_estimasi: price?.qty_estimasi === true,
           satuan: price?.satuan || null,
           harga_dasar: price?.harga_dasar ?? null,
+          harga_net: net.harga_net,
+          diskon: net.diskon,
+          diskon_keterangan: net.keterangan,
           skor,
         });
       }

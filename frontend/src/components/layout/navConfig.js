@@ -1,10 +1,8 @@
 import {
   Building2,
   LineChart,
-  Link2,
   Pill,
   Plus,
-  Tags,
   TrendingUp,
   UserCircle,
   Warehouse,
@@ -21,17 +19,11 @@ export const PRIMARY_NAV_ITEMS = [
     label: 'Supplier',
     to: '/data-supplier',
     menuKode: 'data-supplier',
-    match: (pathname) => pathname.startsWith('/data-supplier'),
+    match: (pathname) =>
+      pathname.startsWith('/data-supplier') ||
+      pathname.startsWith('/matching') ||
+      pathname.startsWith('/pricelist-pbf'),
     icon: Building2,
-    type: 'link',
-  },
-  {
-    id: 'pricelist',
-    label: 'Pricelist',
-    to: '/pricelist-pbf',
-    menuKode: 'pricelist-pbf',
-    match: (pathname) => pathname.startsWith('/pricelist-pbf'),
-    icon: Tags,
     type: 'link',
   },
   {
@@ -41,15 +33,6 @@ export const PRIMARY_NAV_ITEMS = [
     menuKode: 'data-obat-yelo',
     match: (pathname) => pathname.startsWith('/data-obat-yelo'),
     icon: Pill,
-    type: 'link',
-  },
-  {
-    id: 'matching',
-    label: 'Matching',
-    to: '/matching',
-    menuKode: 'matching',
-    match: (pathname) => pathname.startsWith('/matching'),
-    icon: Link2,
     type: 'link',
   },
   {

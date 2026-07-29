@@ -201,7 +201,7 @@ function drawTemplate1(doc, { dokumen, items, supplier, pengaturan }) {
     item.nama_obat || item.kode_obat,
     String(item.qty_order),
     item.satuan || '-',
-    '',
+    item.keterangan || '',
   ]);
 
   y = drawTable(doc, { x: marginX, columns, rows, startY: y, fontSize: 7.8 });
@@ -319,7 +319,7 @@ function drawTemplate2(doc, { dokumen, items, supplier, pengaturan, config }) {
       bentukSediaan ? bentukSediaan : { text: WARNING_TEXT, warn: true },
       item.satuan || '-',
       formatJumlahDenganKata(item.qty_order),
-      '',
+      item.keterangan || '',
     ];
   });
 

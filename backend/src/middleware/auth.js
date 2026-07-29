@@ -16,10 +16,15 @@ function profileFromAuthUser(authUser) {
     (typeof meta.name === 'string' && meta.name.trim()) ||
     authUser.email ||
     null;
+  const avatar =
+    (typeof meta.avatar_url === 'string' && meta.avatar_url.trim()) ||
+    (typeof meta.picture === 'string' && meta.picture.trim()) ||
+    null;
   return {
     id: authUser.id,
     email: authUser.email || '',
     nama,
+    avatar,
   };
 }
 
@@ -46,7 +51,18 @@ async function createAppUser(authUser) {
   if (countError) throw countError;
 
   const isFirst = (count ?? 0) === 0;
-  const row = {
+  const rowFull = {
+    id: base.id,
+    email: base.email,
+    nama: base.nama,
+    nick_nama: base.nama,
+    nama_lengkap: base.nama,
+    avatar_url: base.avatar,
+    status: isFirst ? 'aktif' : 'menunggu',
+    is_owner: isFirst,
+    group_id: null,
+  };
+  const rowLegacy = {
     id: base.id,
     email: base.email,
     nama: base.nama,
@@ -55,11 +71,19 @@ async function createAppUser(authUser) {
     group_id: null,
   };
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('users')
-    .insert(row)
+    .insert(rowFull)
     .select(USER_SELECT)
     .single();
+
+  if (error && /nick_nama|nama_lengkap|avatar_url/i.test(error.message || '')) {
+    ({ data, error } = await supabase
+      .from('users')
+      .insert(rowLegacy)
+      .select(USER_SELECT)
+      .single());
+  }
 
   if (error) {
     // Race: another request inserted the same auth user — re-fetch.

@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { MoreVertical, RefreshCw } from 'lucide-react';
+import { History, MoreVertical, RefreshCw, Upload } from 'lucide-react';
 import SubmitSpinner from './SubmitSpinner';
 
 /**
  * Pill switch Supplier ↔ Pricelist (Matching board).
- * On Pricelist: titik tiga di kanan pill → menu Refresh Kandidat.
+ * On Pricelist: titik tiga → Upload · History · Refresh Kandidat.
  */
 export default function SupplierPricelistTabs({
   active,
   onRefreshKandidat = null,
   refreshDisabled = false,
   refreshing = false,
+  onUploadPricelist = null,
+  uploadDisabled = false,
+  onHistoryPricelist = null,
 }) {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -33,6 +36,10 @@ export default function SupplierPricelistTabs({
     search: pricelistSearch,
   };
 
+  const showMenu = Boolean(
+    onRefreshKandidat || onUploadPricelist || onHistoryPricelist
+  );
+
   useEffect(() => {
     if (!menuOpen) return undefined;
     function onDoc(e) {
@@ -53,7 +60,6 @@ export default function SupplierPricelistTabs({
     setMenuOpen(false);
   }, [location.pathname, location.search]);
 
-  // Derive from URL so warna selalu ikut halaman yang tampil
   const tabActive = location.pathname.startsWith('/matching')
     ? 'pricelist'
     : location.pathname.startsWith('/data-supplier')
@@ -74,7 +80,7 @@ export default function SupplierPricelistTabs({
         Pricelist
       </Link>
 
-      {tabActive === 'pricelist' && onRefreshKandidat ? (
+      {tabActive === 'pricelist' && showMenu ? (
         <div className="relative" ref={menuRef}>
           <button
             type="button"
@@ -91,23 +97,54 @@ export default function SupplierPricelistTabs({
               role="menu"
               className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[11rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
             >
-              <button
-                type="button"
-                role="menuitem"
-                disabled={refreshDisabled || refreshing}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onRefreshKandidat();
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover disabled:opacity-50"
-              >
-                {refreshing ? (
-                  <SubmitSpinner className="h-3.5 w-3.5" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5 text-accent-yellow" />
-                )}
-                Refresh Kandidat
-              </button>
+              {onUploadPricelist ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={uploadDisabled}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onUploadPricelist();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover disabled:opacity-50"
+                >
+                  <Upload className="h-3.5 w-3.5 text-accent-yellow" />
+                  Upload Pricelist
+                </button>
+              ) : null}
+              {onHistoryPricelist ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onHistoryPricelist();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
+                >
+                  <History className="h-3.5 w-3.5 text-accent-yellow" />
+                  History Pricelist
+                </button>
+              ) : null}
+              {onRefreshKandidat ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={refreshDisabled || refreshing}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRefreshKandidat();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover disabled:opacity-50"
+                >
+                  {refreshing ? (
+                    <SubmitSpinner className="h-3.5 w-3.5" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5 text-accent-yellow" />
+                  )}
+                  Refresh Kandidat
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -364,6 +364,7 @@ function sampleFromItems(items, limit = 10) {
     qty: item.qty,
     qty_estimasi: Boolean(item.qty_estimasi),
     harga_dasar: item.harga_dasar,
+    diskon: item.diskon || null,
     catatan_kondisi: item.catatan_kondisi,
     __row: item.__row,
     __lanjutan_rows: item.__lanjutan_rows || [],

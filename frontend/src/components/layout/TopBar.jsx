@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronRight, Settings, Shield, UserRound } from 'lucide-react';
+import { ChevronRight, LogOut, Settings, Shield, UserRound } from 'lucide-react';
 import SheetModal from '../SheetModal';
 import { useAuth } from '../../context/AuthContext';
 import { canSeeMenu } from '../../lib/permissions';
@@ -19,9 +19,10 @@ export default function TopBar({
 }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { profile } = useAuth();
+  const { profile, signOut } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [akunOpen, setAkunOpen] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const labelId = useId();
 
   const action = resolvePageAction(location.pathname, pageAction);
@@ -52,6 +53,17 @@ export default function TopBar({
     setAkunOpen(false);
     collapse();
     navigate(path);
+  }
+
+  async function handleLogout() {
+    setLogoutBusy(true);
+    try {
+      await signOut();
+      setAkunOpen(false);
+      navigate('/login', { replace: true });
+    } catch {
+      setLogoutBusy(false);
+    }
   }
 
   function handleNavItem(item) {
@@ -214,6 +226,19 @@ export default function TopBar({
               </span>
               <span className="flex-1 text-[13px] text-text-primary">Akun</span>
               <ChevronRight className="h-4 w-4 text-text-muted" />
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={logoutBusy}
+              className="flex w-full items-center gap-3 rounded-[4px] px-2 py-2.5 text-left hover:bg-state-error/10 disabled:opacity-60"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-bg-base text-state-error">
+                <LogOut className="h-4 w-4" />
+              </span>
+              <span className="flex-1 text-[13px] font-medium text-state-error">
+                {logoutBusy ? 'Keluar…' : 'Keluar'}
+              </span>
             </button>
           </div>
         </SheetModal>

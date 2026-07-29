@@ -10,6 +10,7 @@ const { generateNomorSp } = require('../lib/nomorSp');
 const { getPengaturanApotek } = require('../lib/pengaturanApotek');
 const { buildDokumenSpPdfBuffer } = require('../lib/pdfSp');
 const { uploadDokumenSpPdf } = require('../lib/storageSp');
+const { resolveHargaNet } = require('../lib/pricelistDiskon');
 
 const router = express.Router();
 router.use(requireAuth, requireApproved);
@@ -23,11 +24,14 @@ const KATEGORI_TO_DB = {
   mitra: ['mitra'],
 };
 
+const PRICELIST_SELECT =
+  'pbf_id, kode_pbf, harga_dasar, diskon, catatan_kondisi, tanggal_upload';
+const PRICELIST_SELECT_LEGACY = 'pbf_id, kode_pbf, harga_dasar, tanggal_upload';
+
 /**
  * Bulk load latest pricelist row per (pbf_id, kode_pbf).
- * Sama pola dengan forecast.js — query per-PBF, bukan N+1 per obat.
  * @param {Array<{ pbf_id: string, kode_pbf: string }>} pairs
- * @returns {Promise<Map<string, { harga_dasar: * }>>} key = `${pbfId}\0${kodePbf}`
+ * @returns {Promise<Map<string, object>>} key = `${pbfId}\0${kodePbf}`
  */
 async function loadLatestPricelistMap(pairs) {
   const map = new Map();
@@ -49,13 +53,25 @@ async function loadLatestPricelistMap(pairs) {
     const kodes = [...kodeSet];
     for (let i = 0; i < kodes.length; i += 150) {
       const chunk = kodes.slice(i, i + 150);
-      const rows = await fetchAllRows(() =>
-        supabase
-          .from('pricelist')
-          .select('pbf_id, kode_pbf, harga_dasar, tanggal_upload')
-          .eq('pbf_id', pbfId)
-          .in('kode_pbf', chunk)
-      );
+      let rows;
+      try {
+        rows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select(PRICELIST_SELECT)
+            .eq('pbf_id', pbfId)
+            .in('kode_pbf', chunk)
+        );
+      } catch (err) {
+        if (!/diskon|catatan_kondisi/i.test(err.message || '')) throw err;
+        rows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select(PRICELIST_SELECT_LEGACY)
+            .eq('pbf_id', pbfId)
+            .in('kode_pbf', chunk)
+        );
+      }
       for (const row of rows) {
         const key = `${row.pbf_id}\0${row.kode_pbf}`;
         const prev = map.get(key);
@@ -291,19 +307,24 @@ async function computeDokumenSpBreakdown(runId) {
       slot = { supplier_id: row.supplier_id, items: [] };
       bySupplier.set(row.supplier_id, slot);
     }
-    const harga =
+    const priceRow =
       row.supplier_id && row.pricelist_kode_pbf
-        ? Number(
-            priceMap.get(`${row.supplier_id}\0${row.pricelist_kode_pbf}`)
-              ?.harga_dasar
-          ) || 0
-        : 0;
+        ? priceMap.get(`${row.supplier_id}\0${row.pricelist_kode_pbf}`) || null
+        : null;
     const qty = Number(row.qty_order) || 0;
+    const net = resolveHargaNet({
+      harga_dasar: priceRow?.harga_dasar,
+      diskon: priceRow?.diskon || priceRow?.catatan_kondisi,
+      qty_order: qty,
+    });
+    const harga = Number(net.harga_net) || 0;
     slot.items.push({
       kode_obat: row.kode_obat,
       golongan: golonganByKode.get(row.kode_obat) || TANPA_GOLONGAN,
       qty_order: qty,
       nominal: qty * harga,
+      harga_net: harga || null,
+      diskon_keterangan: net.keterangan,
     });
   }
 
@@ -510,7 +531,7 @@ async function buildDanSimpanDokumenSp({
   const pilihanRows = await fetchAllRows(() =>
     supabase
       .from('defekta_pilihan_pbf')
-      .select('kode_obat, qty_order')
+      .select('kode_obat, qty_order, pricelist_kode_pbf')
       .eq('forecast_run_id', forecastRunId)
       .eq('supplier_id', supplierId)
       .gt('qty_order', 0)
@@ -525,7 +546,7 @@ async function buildDanSimpanDokumenSp({
     };
   }
 
-  const [obatMetaByKode, supplierRes, pengaturan] = await Promise.all([
+  const [obatMetaByKode, supplierRes, pengaturan, priceMap] = await Promise.all([
     loadObatMetaByKode(pilihanRows.map((r) => r.kode_obat)),
     supabase
       .from('supplier')
@@ -533,9 +554,28 @@ async function buildDanSimpanDokumenSp({
       .eq('id', supplierId)
       .maybeSingle(),
     getPengaturanApotek(),
+    loadLatestPricelistMap(
+      pilihanRows
+        .filter((r) => r.pricelist_kode_pbf)
+        .map((r) => ({ pbf_id: supplierId, kode_pbf: r.pricelist_kode_pbf }))
+    ),
   ]);
   if (supplierRes.error) throw supplierRes.error;
   const supplierInfo = supplierRes.data || null;
+
+  /** @type {Map<string, string|null>} */
+  const keteranganByKode = new Map();
+  for (const row of pilihanRows) {
+    const priceRow = row.pricelist_kode_pbf
+      ? priceMap.get(`${supplierId}\0${row.pricelist_kode_pbf}`) || null
+      : null;
+    const net = resolveHargaNet({
+      harga_dasar: priceRow?.harga_dasar,
+      diskon: priceRow?.diskon || priceRow?.catatan_kondisi,
+      qty_order: row.qty_order,
+    });
+    keteranganByKode.set(row.kode_obat, net.keterangan || null);
+  }
 
   const golonganByKode = new Map(
     [...obatMetaByKode.entries()].map(([kode, meta]) => [kode, meta.golongan])
@@ -690,6 +730,7 @@ async function buildDanSimpanDokumenSp({
         satuan: meta.satuan,
         zat_aktif: meta.zat_aktif,
         bentuk_sediaan: meta.bentuk_sediaan,
+        keterangan: keteranganByKode.get(item.kode_obat) || '',
       };
     });
 

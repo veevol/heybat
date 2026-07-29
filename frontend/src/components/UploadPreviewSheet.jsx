@@ -177,9 +177,11 @@ export default function UploadPreviewSheet({
                             ) : null}
                           </div>
                         ) : null}
-                        {row.catatan_kondisi ? (
+                        {row.diskon || row.catatan_kondisi ? (
                           <div className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">
-                            {row.catatan_kondisi}
+                            {row.diskon
+                              ? `Disc ${row.diskon}`
+                              : row.catatan_kondisi}
                           </div>
                         ) : null}
                       </td>

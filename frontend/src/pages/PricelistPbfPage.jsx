@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileSpreadsheet, FileText, Upload } from 'lucide-react';
+import { ArrowLeft, FileSpreadsheet, FileText, Upload } from 'lucide-react';
 import { listSuppliers } from '../api/suppliers';
 import {
   confirmPricelistUpload,
   getPricelistTemplate,
-  listLatestPricelist,
+  listPricelistByUpload,
+  listPricelistUploads,
   parsePricelistPdfPreview,
   parsePricelistPreview,
   previewPricelistExcel,
@@ -17,6 +18,7 @@ import MappingSheet from '../components/MappingSheet';
 import PdfMappingSheet from '../components/PdfMappingSheet';
 import PricelistCard from '../components/PricelistCard';
 import PricelistSkeleton from '../components/PricelistSkeleton';
+import PricelistUploadCard from '../components/PricelistUploadCard';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import UploadPreviewSheet from '../components/UploadPreviewSheet';
@@ -50,8 +52,11 @@ export default function PricelistPbfPage() {
   const [suppliers, setSuppliers] = useState([]);
   const [pbfId, setPbfId] = useState('');
   const [template, setTemplate] = useState(null);
+  const [uploads, setUploads] = useState([]);
+  const [selectedBatch, setSelectedBatch] = useState(null);
   const [items, setItems] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [uploadKind, setUploadKind] = useState('pdf'); // excel | pdf
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -85,37 +90,53 @@ export default function PricelistPbfPage() {
     };
   }, [showToast]);
 
-  const refreshList = useCallback(
-    async (id) => {
-      if (!id) {
-        setItems([]);
-        return;
-      }
-      setLoadingList(true);
-      try {
-        const data = await listLatestPricelist(id);
-        setItems(data || []);
-      } catch (err) {
-        showToast(err.message || 'Gagal memuat pricelist');
-        setItems([]);
-      } finally {
-        setLoadingList(false);
-      }
-    },
-    [showToast]
-  );
+  const refreshUploads = useCallback(async () => {
+    setLoadingList(true);
+    try {
+      const data = await listPricelistUploads();
+      setUploads(data || []);
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat riwayat upload');
+      setUploads([]);
+    } finally {
+      setLoadingList(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    refreshUploads();
+  }, [refreshUploads]);
 
   useEffect(() => {
     if (!pbfId) {
       setTemplate(null);
-      setItems([]);
       return;
     }
     getPricelistTemplate(pbfId)
       .then((tpl) => setTemplate(tpl))
       .catch(() => setTemplate(null));
-    refreshList(pbfId);
-  }, [pbfId, refreshList]);
+  }, [pbfId]);
+
+  async function openBatch(batch) {
+    if (!batch?.pbf_id || !batch?.tanggal_upload) return;
+    setSelectedBatch(batch);
+    setLoadingDetail(true);
+    setItems([]);
+    try {
+      const data = await listPricelistByUpload(batch.pbf_id, batch.tanggal_upload);
+      setItems(data || []);
+    } catch (err) {
+      showToast(err.message || 'Gagal memuat data obat');
+      setItems([]);
+    } finally {
+      setLoadingDetail(false);
+    }
+  }
+
+  function closeBatch() {
+    setSelectedBatch(null);
+    setItems([]);
+  }
 
   function openMappedPreview(result) {
     setParseResult(result);
@@ -362,7 +383,9 @@ export default function PricelistPbfPage() {
       );
       const tpl = await getPricelistTemplate(pbfId);
       setTemplate(tpl);
-      await refreshList(pbfId);
+      await refreshUploads();
+      setSelectedBatch(null);
+      setItems([]);
       setPreviewOpen(false);
       setParseResult(null);
       setScaleBy1000(false);
@@ -419,124 +442,165 @@ export default function PricelistPbfPage() {
         : null;
 
   return (
-    <AppShell title="Pricelist PBF" navLoading={loadingList || busy}>
-      <section className="mb-3 space-y-2 rounded-[4px] border border-border-subtle bg-bg-surface p-2.5">
-        <label className="block space-y-0.5">
-          <span className="text-[11px] text-text-secondary">Pilih PBF</span>
-          <select
-            value={pbfId}
-            onChange={(e) => setPbfId(e.target.value)}
-            className={selectClass}
-          >
-            <option value="">— Pilih supplier —</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.nama} ({s.inisial})
-              </option>
-            ))}
-          </select>
-        </label>
+    <AppShell title="Pricelist PBF" navLoading={loadingList || loadingDetail || busy}>
+      {!selectedBatch ? (
+        <section className="mb-3 space-y-2 rounded-[4px] border border-border-subtle bg-bg-surface p-2.5">
+          <label className="block space-y-0.5">
+            <span className="text-[11px] text-text-secondary">Pilih PBF (untuk upload)</span>
+            <select
+              value={pbfId}
+              onChange={(e) => setPbfId(e.target.value)}
+              className={selectClass}
+            >
+              <option value="">— Pilih supplier —</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.nama} ({s.inisial})
+                </option>
+              ))}
+            </select>
+          </label>
 
-        {canTambah ? (
-          <div className="space-y-0.5">
-            <span className="text-[11px] text-text-secondary">Jenis file</span>
-            <div className="flex gap-1">
-              {[
-                { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
-                { id: 'pdf', label: 'PDF', icon: FileText },
-              ].map((opt) => {
-                const Icon = opt.icon;
-                const active = uploadKind === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setUploadKind(opt.id)}
-                    className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
-                      active
-                        ? 'bg-accent-navy text-white'
-                        : 'border border-border-subtle text-text-secondary hover:bg-bg-surface-hover'
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-2">
           {canTambah ? (
-            <label
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white ${
-                !pbfId || busy ? 'pointer-events-none opacity-50' : ''
-              }`}
-            >
-              {busy ? <SubmitSpinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
-              {uploadKind === 'pdf' ? 'Upload PDF' : 'Upload Excel'}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={uploadKind === 'pdf' ? '.pdf,application/pdf' : '.xlsx,.xls,.csv'}
-                className="hidden"
+            <div className="space-y-0.5">
+              <span className="text-[11px] text-text-secondary">Jenis file</span>
+              <div className="flex gap-1">
+                {[
+                  { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
+                  { id: 'pdf', label: 'PDF', icon: FileText },
+                ].map((opt) => {
+                  const Icon = opt.icon;
+                  const active = uploadKind === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setUploadKind(opt.id)}
+                      className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
+                        active
+                          ? 'bg-accent-navy text-white'
+                          : 'border border-border-subtle text-text-secondary hover:bg-bg-surface-hover'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            {canTambah ? (
+              <label
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white ${
+                  !pbfId || busy ? 'pointer-events-none opacity-50' : ''
+                }`}
+              >
+                {busy ? <SubmitSpinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+                {uploadKind === 'pdf' ? 'Upload PDF' : 'Upload Excel'}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={uploadKind === 'pdf' ? '.pdf,application/pdf' : '.xlsx,.xls,.csv'}
+                  className="hidden"
+                  disabled={!pbfId || busy}
+                  onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
+                />
+              </label>
+            ) : null}
+
+            {canEdit && template ? (
+              <button
+                type="button"
+                onClick={openEditMapping}
                 disabled={!pbfId || busy}
-                onChange={(e) => handleFilePicked(e.target.files?.[0] || null)}
-              />
-            </label>
+                className="rounded-[4px] border border-border-subtle px-3 py-2 text-[12px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
+              >
+                Edit Mapping ({template.tipe_sumber === 'pdf' ? 'PDF' : 'Excel'})
+              </button>
+            ) : null}
+
+            {canTambah && !template && pbfId ? (
+              <span className="text-[11px] text-state-warning">
+                Belum ada template — mapping diminta saat upload pertama
+              </span>
+            ) : null}
+          </div>
+
+          {templateLabel ? (
+            <p className="text-[11px] text-text-muted">Aktif: {templateLabel}</p>
           ) : null}
 
-          {canEdit && template ? (
-            <button
-              type="button"
-              onClick={openEditMapping}
-              disabled={!pbfId || busy}
-              className="rounded-[4px] border border-border-subtle px-3 py-2 text-[12px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
-            >
-              Edit Mapping ({template.tipe_sumber === 'pdf' ? 'PDF' : 'Excel'})
-            </button>
+          {file ? (
+            <p className="flex items-center gap-1.5 text-[11px] text-text-muted">
+              {uploadKind === 'pdf' ? (
+                <FileText className="h-3.5 w-3.5" />
+              ) : (
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+              )}
+              {file.name}
+            </p>
           ) : null}
+        </section>
+      ) : null}
 
-          {canTambah && !template && pbfId ? (
-            <span className="text-[11px] text-state-warning">
-              Belum ada template — mapping diminta saat upload pertama
+      {selectedBatch ? (
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={closeBatch}
+            className="inline-flex items-center gap-1.5 rounded-[4px] border border-border-subtle px-2.5 py-1.5 text-[12px] text-text-secondary hover:bg-bg-surface-hover"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Riwayat
+          </button>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="shrink-0 rounded-[4px] bg-accent-yellow px-1.5 py-0.5 text-[10px] font-semibold leading-none text-bg-base">
+              {selectedBatch.inisial || '—'}
             </span>
-          ) : null}
+            <span className="truncate text-[12px] text-text-secondary">
+              {selectedBatch.nama || 'PBF'} · {selectedBatch.item_count} item
+            </span>
+          </div>
         </div>
+      ) : (
+        <p className="mb-2 text-[11px] text-text-muted">
+          Riwayat upload — tap card untuk lihat data obat.
+        </p>
+      )}
 
-        {templateLabel ? (
-          <p className="text-[11px] text-text-muted">Aktif: {templateLabel}</p>
-        ) : null}
+      {!selectedBatch && loadingList ? <PricelistSkeleton /> : null}
 
-        {file ? (
-          <p className="flex items-center gap-1.5 text-[11px] text-text-muted">
-            {uploadKind === 'pdf' ? (
-              <FileText className="h-3.5 w-3.5" />
-            ) : (
-              <FileSpreadsheet className="h-3.5 w-3.5" />
-            )}
-            {file.name}
-          </p>
-        ) : null}
-      </section>
-
-      {!pbfId ? (
+      {!selectedBatch && !loadingList && uploads.length === 0 ? (
         <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-          Pilih PBF untuk melihat pricelist terbaru dan upload file.
+          Belum ada riwayat upload. Pilih PBF lalu upload Excel/PDF untuk mulai.
         </div>
       ) : null}
 
-      {pbfId && loadingList ? <PricelistSkeleton /> : null}
-
-      {pbfId && !loadingList && items.length === 0 ? (
-        <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-          Belum ada data pricelist untuk PBF ini. Upload Excel atau PDF untuk mulai.
+      {!selectedBatch && !loadingList && uploads.length > 0 ? (
+        <div className="grid grid-cols-1 gap-1.5">
+          {uploads.map((batch) => (
+            <PricelistUploadCard
+              key={`${batch.pbf_id}-${batch.tanggal_upload}`}
+              batch={batch}
+              onOpen={openBatch}
+            />
+          ))}
         </div>
       ) : null}
 
-      {pbfId && !loadingList && items.length > 0 ? (
+      {selectedBatch && loadingDetail ? <PricelistSkeleton /> : null}
+
+      {selectedBatch && !loadingDetail && items.length === 0 ? (
+        <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+          Tidak ada item pada upload ini.
+        </div>
+      ) : null}
+
+      {selectedBatch && !loadingDetail && items.length > 0 ? (
         <div className="grid grid-cols-1 gap-1.5">
           {items.map((item) => (
             <PricelistCard key={`${item.kode_pbf}-${item.id}`} item={item} />

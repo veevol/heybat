@@ -3,6 +3,7 @@ import OwnerRoute from './components/OwnerRoute';
 import ProtectedRoute from './components/ProtectedRoute';
 import RequireMenuAksi from './components/RequireMenuAksi';
 import { AuthProvider } from './context/AuthContext';
+import AkunPage from './pages/AkunPage';
 import DataObatYeloPage from './pages/DataObatYeloPage';
 import DataSupplierPage from './pages/DataSupplierPage';
 import ForecastingPage from './pages/ForecastingPage';
@@ -15,6 +16,7 @@ import MenungguPersetujuanPage from './pages/MenungguPersetujuanPage';
 import PembuatanSpPage from './pages/PembuatanSpPage';
 import PenjualanPage from './pages/PenjualanPage';
 import PlaceholderPage from './pages/PlaceholderPage';
+import PricelistHistoryPage from './pages/PricelistHistoryPage';
 import PricelistPbfPage from './pages/PricelistPbfPage';
 import StokPage from './pages/StokPage';
 
@@ -39,6 +41,10 @@ export default function App() {
               element={<Navigate to="/data-obat-yelo" replace />}
             />
             <Route path="/matching" element={<MatchingPage />} />
+            <Route
+              path="/matching/history-pricelist"
+              element={<PricelistHistoryPage />}
+            />
             <Route
               element={
                 <RequireMenuAksi menu="matching" aksi="verifikasi" fallback="/matching" />
@@ -79,15 +85,7 @@ export default function App() {
               <Route path="/forecasting" element={<ForecastingPage />} />
               <Route path="/pembuatan-sp/:runId" element={<PembuatanSpPage />} />
             </Route>
-            <Route
-              path="/akun"
-              element={
-                <PlaceholderPage
-                  title="Akun"
-                  body="Halaman akun masih placeholder. Detail profil menyusul."
-                />
-              }
-            />
+            <Route path="/akun" element={<AkunPage />} />
             <Route
               path="/pengaturan"
               element={
@@ -97,7 +95,6 @@ export default function App() {
                 />
               }
             />
-
             <Route element={<OwnerRoute />}>
               <Route path="/kelola-akses" element={<KelolaAksesPage />} />
             </Route>

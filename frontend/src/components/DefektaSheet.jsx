@@ -49,6 +49,13 @@ function formatHarga(harga) {
   return `Rp ${formatNumberId(n) ?? n}`;
 }
 
+function formatHargaNet(row) {
+  const net = row.harga_net != null ? row.harga_net : row.harga_dasar;
+  const base = formatHarga(net);
+  if (!row.diskon_keterangan) return base;
+  return `${base} · ${row.diskon_keterangan}`;
+}
+
 function resolveDefaultQty(obat, defaultQtyOrder, qtyTersimpan) {
   if (qtyTersimpan != null && qtyTersimpan !== '') {
     const n = Number(qtyTersimpan);
@@ -367,7 +374,7 @@ export default function DefektaSheet({
                           {formatStokSupplier(row)}
                         </span>
                         <span className="truncate text-right font-medium text-text-primary">
-                          {formatHarga(row.harga_dasar)}
+                          {formatHargaNet(row)}
                         </span>
                       </button>
                     </li>

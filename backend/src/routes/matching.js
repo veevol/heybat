@@ -17,6 +17,14 @@ const HIDDEN_FROM_KANDIDAT = ['menunggu_verifikasi', 'terverifikasi'];
 const KANDIDAT_TOP = 5;
 const UPSERT_CHUNK = 100;
 
+/** Tampilkan skema diskon SBS di slot catatan bila ada. */
+function displayCatatanKondisi(row) {
+  if (!row) return null;
+  const disc = row.diskon != null ? String(row.diskon).trim() : '';
+  if (disc) return disc;
+  return row.catatan_kondisi || null;
+}
+
 const SELECT_MATCHING = `
   id,
   kode_obat_yelo,
@@ -78,20 +86,82 @@ function actorFromReq(req) {
 }
 
 async function fetchLatestPricelistByPbf(pbfId) {
-  const data = await fetchAllRows(() =>
-    supabase
-      .from('pricelist')
-      .select('kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, tanggal_upload, id')
-      .eq('pbf_id', pbfId)
-      .order('tanggal_upload', { ascending: false })
-      .order('id', { ascending: false })
-  );
+  let data;
+  try {
+    data = await fetchAllRows(() =>
+      supabase
+        .from('pricelist')
+        .select(
+          'kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, diskon, tanggal_upload, auto_kosong, dihapus_pada, id'
+        )
+        .eq('pbf_id', pbfId)
+        .order('tanggal_upload', { ascending: false })
+        .order('id', { ascending: false })
+    );
+  } catch (err) {
+    const msg = err.message || '';
+    if (!/dihapus_pada|diskon/i.test(msg)) throw err;
+    data = await fetchAllRows(() =>
+      supabase
+        .from('pricelist')
+        .select(
+          'kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, tanggal_upload, auto_kosong, id'
+        )
+        .eq('pbf_id', pbfId)
+        .order('tanggal_upload', { ascending: false })
+        .order('id', { ascending: false })
+    );
+  }
 
   const map = new Map();
   for (const row of data) {
+    if (row.dihapus_pada) continue;
     if (!map.has(row.kode_pbf)) map.set(row.kode_pbf, row);
   }
   return [...map.values()];
+}
+
+/** Snapshot satu batch upload (tanpa baris auto_kosong / soft-deleted). */
+async function fetchPricelistByUpload(pbfId, tanggalUpload) {
+  let data;
+  try {
+    data = await fetchAllRows(() =>
+      supabase
+        .from('pricelist')
+        .select(
+          'kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, diskon, tanggal_upload, auto_kosong, dihapus_pada, id'
+        )
+        .eq('pbf_id', pbfId)
+        .eq('tanggal_upload', tanggalUpload)
+        .order('nama_barang', { ascending: true })
+    );
+  } catch (err) {
+    const msg = err.message || '';
+    if (!/dihapus_pada|diskon/i.test(msg)) throw err;
+    data = await fetchAllRows(() =>
+      supabase
+        .from('pricelist')
+        .select(
+          'kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, tanggal_upload, auto_kosong, id'
+        )
+        .eq('pbf_id', pbfId)
+        .eq('tanggal_upload', tanggalUpload)
+        .order('nama_barang', { ascending: true })
+    );
+  }
+
+  const map = new Map();
+  for (const row of data || []) {
+    if (row.dihapus_pada) continue;
+    if (row.auto_kosong) continue;
+    if (!map.has(row.kode_pbf)) map.set(row.kode_pbf, row);
+  }
+  return [...map.values()];
+}
+
+async function fetchPricelistForBoard(pbfId, tanggalUpload = null) {
+  if (tanggalUpload) return fetchPricelistByUpload(pbfId, tanggalUpload);
+  return fetchLatestPricelistByPbf(pbfId);
 }
 
 async function fetchAllObatYeloLight() {
@@ -391,7 +461,8 @@ router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req,
         satuan: row.satuan,
         qty: row.qty,
         harga_dasar: row.harga_dasar,
-        catatan_kondisi: row.catatan_kondisi || null,
+        catatan_kondisi: displayCatatanKondisi(row),
+        diskon: row.diskon || null,
         kandidat,
         dari_cache: fromCache,
       });
@@ -422,8 +493,10 @@ router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req,
 });
 
 /**
- * GET /api/matching/board?pbf_id=&status=&q=
+ * GET /api/matching/board?pbf_id=&status=&q=&tanggal_upload=
  * status: all | match | menunggu | belum | no_match
+ * tanggal_upload (opsional): pakai snapshot batch history untuk list/qty/harga;
+ *   status matching tetap dari tabel matching saat ini.
  * Cards:
  *  - kind=match: grup per obat Yelo (terverifikasi) + semua baris pricelist match
  *  - kind=pending|unmatched|rejected: 1 card per kode PBF
@@ -441,6 +514,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       return res.status(400).json({ error: 'status filter tidak valid' });
     }
     const q = String(req.query.q || '').trim().toLowerCase();
+    const tanggalUpload = normalizeText(req.query.tanggal_upload);
     const limitRaw = parseInt(String(req.query.limit || '40'), 10);
     const offsetRaw = parseInt(String(req.query.offset || '0'), 10);
     const limit = Number.isFinite(limitRaw) ? Math.min(100, Math.max(1, limitRaw)) : 40;
@@ -466,7 +540,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
 
     // Data dasar selalu; stok/supplier-all hanya bila perlu card Match
     const [latest, matchings, cacheInfo, stokMap] = await Promise.all([
-      fetchLatestPricelistByPbf(pbfId),
+      fetchPricelistForBoard(pbfId, tanggalUpload),
       fetchAllRows(() =>
         supabase
           .from('matching')
@@ -480,6 +554,8 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
         ? loadLatestStokRingkasanMap().catch(() => new Map())
         : Promise.resolve(new Map()),
     ]);
+
+    const snapshotKodes = new Set(latest.map((r) => r.kode_pbf));
 
     // Active matching per kode for this PBF (prefer terverifikasi > menunggu > ditolak skip)
     const byKode = new Map();
@@ -496,11 +572,13 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       }
     }
 
-    // Match groups: obat Yelo that have terverifikasi on this PBF
+    // Match groups: 1 obat Yelo per kode PBF aktif (byKode),
+    // jangan hitung semua baris terverifikasi dobel ke Yelo berbeda.
     const yeloCodesNeeded = new Set();
-    for (const row of matchings) {
-      if (row.status === 'terverifikasi' && row.kode_obat_yelo) {
-        yeloCodesNeeded.add(row.kode_obat_yelo);
+    for (const row of latest) {
+      const m = byKode.get(row.kode_pbf);
+      if (m?.status === 'terverifikasi' && m.kode_obat_yelo) {
+        yeloCodesNeeded.add(m.kode_obat_yelo);
       }
     }
 
@@ -542,7 +620,10 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       const plLookup = new Map(); // `${pbfId}::${kode}` -> row
       await Promise.all(
         [...needPl.entries()].map(async ([id, kodeSet]) => {
-          const rows = await fetchLatestPricelistByPbf(id);
+          const rows =
+            tanggalUpload && id === pbfId
+              ? await fetchPricelistByUpload(id, tanggalUpload)
+              : await fetchLatestPricelistByPbf(id);
           for (const r of rows) {
             if (kodeSet.has(r.kode_pbf)) plLookup.set(`${id}::${r.kode_pbf}`, r);
           }
@@ -558,6 +639,12 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
         const obat = obatByKode.get(kodeObat) || { kode_obat: kodeObat, nama_obat: kodeObat };
         const lines = crossMatchings
           .filter((m) => m.kode_obat_yelo === kodeObat)
+          .filter((m) => {
+            // History: sembunyikan baris PBF ini jika kode tidak ada di snapshot
+            if (!tanggalUpload) return true;
+            if (m.pricelist_pbf_id !== pbfId) return true;
+            return snapshotKodes.has(m.pricelist_kode_pbf);
+          })
           .map((m) => {
             const pl = plLookup.get(`${m.pricelist_pbf_id}::${m.pricelist_kode_pbf}`);
             const sup = m.supplier;
@@ -570,7 +657,8 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
               satuan: pl?.satuan || null,
               qty: pl?.qty ?? null,
               harga_dasar: pl?.harga_dasar ?? null,
-              catatan_kondisi: pl?.catatan_kondisi || null,
+              catatan_kondisi: displayCatatanKondisi(pl),
+              diskon: pl?.diskon || null,
             };
           });
 
@@ -607,7 +695,11 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
               board_key: `pending:${row.kode_pbf}`,
               status: 'menunggu_verifikasi',
               matching_id: m.id,
-              pricelist: { ...row, pbf_id: pbfId },
+              pricelist: {
+                ...row,
+                pbf_id: pbfId,
+                catatan_kondisi: displayCatatanKondisi(row),
+              },
               selected_obat: m.obat || null,
               kode_obat_yelo: m.kode_obat_yelo,
               kandidat: null,
@@ -623,7 +715,11 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
               board_key: `rejected:${row.kode_pbf}`,
               status: 'ditolak',
               matching_id: m.id,
-              pricelist: { ...row, pbf_id: pbfId },
+              pricelist: {
+                ...row,
+                pbf_id: pbfId,
+                catatan_kondisi: displayCatatanKondisi(row),
+              },
               selected_obat: null,
               kode_obat_yelo: null,
               kandidat: null,
@@ -638,7 +734,11 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
             board_key: `unmatched:${row.kode_pbf}`,
             status: 'belum',
             matching_id: m?.status === 'ditolak' ? m.id : null,
-            pricelist: { ...row, pbf_id: pbfId },
+            pricelist: {
+              ...row,
+              pbf_id: pbfId,
+              catatan_kondisi: displayCatatanKondisi(row),
+            },
             selected_obat: null,
             kode_obat_yelo: null,
             kandidat: null,
@@ -708,10 +808,22 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       })
     );
 
+    let snapshotMeta = null;
+    if (tanggalUpload) {
+      const tanggalPricelist = normalizeText(req.query.tanggal_pricelist);
+      snapshotMeta = {
+        tanggal_upload: tanggalUpload,
+        tanggal_pricelist: tanggalPricelist || null,
+        item_count: latest.length,
+      };
+    }
+
     return res.json({
       supplier,
       filter: statusFilter,
       q: q || null,
+      tanggal_upload: tanggalUpload || null,
+      snapshot: snapshotMeta,
       counts,
       total,
       offset,
@@ -752,7 +864,7 @@ router.get('/menunggu-verifikasi', requireMenuAksi('matching', 'lihat'), async (
         const plRows = await fetchAllRows(() =>
           supabase
             .from('pricelist')
-            .select('kode_pbf, nama_barang, harga_dasar, satuan, catatan_kondisi, tanggal_upload, id')
+            .select('kode_pbf, nama_barang, harga_dasar, satuan, catatan_kondisi, diskon, tanggal_upload, id')
             .eq('pbf_id', pbfId)
             .order('tanggal_upload', { ascending: false })
             .order('id', { ascending: false })
@@ -773,7 +885,8 @@ router.get('/menunggu-verifikasi', requireMenuAksi('matching', 'lihat'), async (
         pricelist_nama_barang: pl?.nama_barang || null,
         pricelist_harga_dasar: pl?.harga_dasar ?? null,
         pricelist_satuan: pl?.satuan || null,
-        pricelist_catatan_kondisi: pl?.catatan_kondisi || null,
+        pricelist_catatan_kondisi: displayCatatanKondisi(pl),
+        pricelist_diskon: pl?.diskon || null,
       };
     });
 

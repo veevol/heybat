@@ -23,6 +23,7 @@ import MatchingActionCard from '../components/MatchingActionCard';
 import MatchingMatchCard from '../components/MatchingMatchCard';
 import SubmitSpinner from '../components/SubmitSpinner';
 import SupplierPricelistTabs from '../components/SupplierPricelistTabs';
+import PricelistUploadSheet from '../components/PricelistUploadSheet';
 import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingModal';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
@@ -89,8 +90,31 @@ function resolveObatMeta(kode, katalogMap, kandidat = []) {
   return { kode_obat: kode, nama_obat: kode };
 }
 
-function boardCacheKey(pbfId, status, q) {
-  return `${pbfId}|${status}|${q || ''}`;
+function boardCacheKey(pbfId, status, q, tanggalUpload = '') {
+  return `${pbfId}|${status}|${q || ''}|${tanggalUpload || ''}`;
+}
+
+function formatPricelistDate(isoDate) {
+  if (!isoDate) return '—';
+  try {
+    const d = String(isoDate).slice(0, 10);
+    const [y, m, day] = d.split('-').map(Number);
+    if (!y || !m || !day) return d;
+    return new Date(Date.UTC(y, m - 1, day)).toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+  } catch {
+    return String(isoDate);
+  }
+}
+
+function formatNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  return new Intl.NumberFormat('id-ID').format(num);
 }
 
 export default function MatchingPage() {
@@ -99,12 +123,15 @@ export default function MatchingPage() {
   const canEditMatching = hasAccess('matching', 'edit');
   const canEditObat = hasAccess('data-obat-yelo', 'edit');
   const canTambahObat = hasAccess('data-obat-yelo', 'tambah');
+  const canUploadPricelist = hasAccess('pricelist-pbf', 'tambah');
   const isOwner = profile?.is_owner === true;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const [suppliers, setSuppliers] = useState([]);
   const [pbfId, setPbfId] = useState(() => searchParams.get('pbf_id') || '');
+  const tanggalUpload = searchParams.get('tanggal_upload') || '';
+  const tanggalPricelistParam = searchParams.get('tanggal_pricelist') || '';
   const [statusFilter, setStatusFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -119,6 +146,7 @@ export default function MatchingPage() {
     belum: 0,
     no_match: 0,
   });
+  const [snapshot, setSnapshot] = useState(null);
   const PAGE = 40;
   const [selections, setSelections] = useState({});
   const [submittingKey, setSubmittingKey] = useState('');
@@ -133,6 +161,7 @@ export default function MatchingPage() {
   const [tambahSubmitting, setTambahSubmitting] = useState(false);
   const [tambahError, setTambahError] = useState('');
   const [tambahKodeLoading, setTambahKodeLoading] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const toastTimer = useRef(null);
   const pollTimer = useRef(null);
   const boardCacheRef = useRef(new Map());
@@ -210,6 +239,9 @@ export default function MatchingPage() {
     setTotalCards(data.total || 0);
     setOffset(nextOffset + pageCards.length);
     setCounts(data.counts || { match: 0, menunggu: 0, belum: 0, no_match: 0 });
+    if (!append) {
+      setSnapshot(data.snapshot || null);
+    }
     setSelections((prev) => {
       const next = { ...prev };
       for (const card of pageCards) {
@@ -236,11 +268,19 @@ export default function MatchingPage() {
       if (!id) {
         setCards([]);
         setTotalCards(0);
+        setSnapshot(null);
         return;
       }
       const useStatus = status ?? statusFilter;
       const useQ = q ?? debouncedQ;
-      const cacheKey = boardCacheKey(id, useStatus, useQ);
+      const cacheKey = boardCacheKey(id, useStatus, useQ, tanggalUpload);
+      const boardOpts = {
+        status: useStatus,
+        q: useQ,
+        limit: PAGE,
+        tanggalUpload: tanggalUpload || null,
+        tanggalPricelist: tanggalPricelistParam || null,
+      };
 
       if (!append && !force) {
         const cached = boardCacheRef.current.get(cacheKey);
@@ -252,9 +292,7 @@ export default function MatchingPage() {
           const seq = loadSeqRef.current;
           try {
             const data = await getMatchingBoard(id, {
-              status: useStatus,
-              q: useQ,
-              limit: PAGE,
+              ...boardOpts,
               offset: 0,
             });
             if (seq !== loadSeqRef.current) return;
@@ -276,9 +314,7 @@ export default function MatchingPage() {
       const seq = loadSeqRef.current;
       try {
         const data = await getMatchingBoard(id, {
-          status: useStatus,
-          q: useQ,
-          limit: PAGE,
+          ...boardOpts,
           offset: nextOffset,
         });
         if (seq !== loadSeqRef.current) return;
@@ -304,16 +340,24 @@ export default function MatchingPage() {
         }
       }
     },
-    [statusFilter, debouncedQ, showToast, applyBoardPayload]
+    [
+      statusFilter,
+      debouncedQ,
+      tanggalUpload,
+      tanggalPricelistParam,
+      showToast,
+      applyBoardPayload,
+    ]
   );
 
   useEffect(() => {
     if (!pbfId) {
       setCards([]);
+      setSnapshot(null);
       return;
     }
     loadBoard(pbfId);
-  }, [pbfId, statusFilter, debouncedQ, loadBoard]);
+  }, [pbfId, statusFilter, debouncedQ, tanggalUpload, tanggalPricelistParam, loadBoard]);
 
   function invalidateBoardCache() {
     boardCacheRef.current.clear();
@@ -550,9 +594,13 @@ export default function MatchingPage() {
       actions={
         <SupplierPricelistTabs
           active="pricelist"
-          onRefreshKandidat={handleRefreshKandidat}
+          onRefreshKandidat={canEditMatching ? handleRefreshKandidat : null}
           refreshDisabled={!pbfId || !canEditMatching}
           refreshing={refreshing}
+          onUploadPricelist={
+            canUploadPricelist ? () => setUploadOpen(true) : null
+          }
+          onHistoryPricelist={() => navigate('/matching/history-pricelist')}
         />
       }
       navLoading={loading || katalogLoading || refreshing}
@@ -569,6 +617,19 @@ export default function MatchingPage() {
               className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-1.5 pl-10 pr-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow"
             />
           </div>
+
+          {tanggalUpload ? (
+            <p className="text-[11px] leading-snug text-text-muted">
+              Pricelist {selectedPbf?.inisial || snapshot?.inisial || '—'} tanggal{' '}
+              {formatPricelistDate(
+                snapshot?.tanggal_pricelist ||
+                  tanggalPricelistParam ||
+                  String(tanggalUpload).slice(0, 10)
+              )}
+              {' · '}
+              {formatNumber(snapshot?.item_count ?? 0)} item
+            </p>
+          ) : null}
 
           <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
             {FILTERS.map((f) => {
@@ -699,6 +760,30 @@ export default function MatchingPage() {
           kodeLoading={tambahKodeLoading}
         />
       ) : null}
+
+      <PricelistUploadSheet
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        suppliers={suppliers}
+        initialPbfId={pbfId}
+        onToast={showToast}
+        onSuccess={({ pbfId: uploadedPbfId }) => {
+          if (uploadedPbfId) {
+            setPbfId(uploadedPbfId);
+            try {
+              sessionStorage.setItem('heybat_pricelist_pbf_id', uploadedPbfId);
+            } catch {
+              /* ignore */
+            }
+            navigate(
+              `/matching?pbf_id=${encodeURIComponent(uploadedPbfId)}`,
+              { replace: true }
+            );
+          }
+          invalidateBoardCache();
+          if (uploadedPbfId) loadBoard(uploadedPbfId, { force: true });
+        }}
+      />
 
       {toast ? <Toast message={toast} onClose={() => setToast('')} /> : null}
     </AppShell>

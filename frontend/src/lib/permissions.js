@@ -28,3 +28,20 @@ export function canSeeMenu(profile, menuKode) {
   if (!menuKode) return true;
   return hasAccess(profile, menuKode, 'lihat');
 }
+
+/**
+ * Nama grup akses (non-owner). Owner → null.
+ * @param {{ is_owner?: boolean, group?: { nama?: string } | null } | null | undefined} profile
+ * @returns {string|null}
+ */
+export function groupName(profile) {
+  if (!profile || profile.is_owner === true) return null;
+  const nama = profile.group?.nama;
+  return nama ? String(nama).trim() : null;
+}
+
+/** Front Office — sembunyikan tagihan di kartu supplier. */
+export function isFrontOffice(profile) {
+  const nama = groupName(profile);
+  return Boolean(nama && nama.toLowerCase() === 'fo');
+}

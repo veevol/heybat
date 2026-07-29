@@ -88,6 +88,34 @@ export async function listLatestPricelist(pbfId) {
   );
 }
 
+/** Riwayat batch upload pricelist (semua PBF). */
+export async function listPricelistUploads() {
+  return apiJson(apiUrl('/api/pricelist/uploads'));
+}
+
+/**
+ * Soft-delete batch pricelist (qty/harga dikosongkan; matching & kode obat PBF tetap).
+ * @param {{ pbfId: string, tanggalUpload: string }}
+ */
+export async function deletePricelistUpload({ pbfId, tanggalUpload }) {
+  return apiJson(apiUrl('/api/pricelist/uploads/hapus'), {
+    method: 'POST',
+    body: JSON.stringify({
+      pbf_id: pbfId,
+      tanggal_upload: tanggalUpload,
+    }),
+  });
+}
+
+/** Item pricelist untuk satu batch upload. */
+export async function listPricelistByUpload(pbfId, tanggalUpload) {
+  const qs = new URLSearchParams({
+    pbf_id: pbfId,
+    tanggal_upload: tanggalUpload,
+  });
+  return apiJson(apiUrl(`/api/pricelist?${qs.toString()}`));
+}
+
 /** Native PDF: extract → needs_mapping atau preview session */
 export async function parsePricelistPdfPreview({
   pbfId,

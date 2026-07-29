@@ -25,9 +25,22 @@ export async function apiFetch(input, init = {}) {
 
 export async function parseResponse(res) {
   if (res.status === 204) return null;
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = {};
+    }
+  }
   if (!res.ok) {
-    const message = data?.error || 'Terjadi kesalahan';
+    const message =
+      data?.error ||
+      (raw && raw.length < 200 && !raw.trim().startsWith('<')
+        ? raw.trim()
+        : null) ||
+      `Terjadi kesalahan (${res.status})`;
     const error = new Error(message);
     error.status = res.status;
     error.data = data;
