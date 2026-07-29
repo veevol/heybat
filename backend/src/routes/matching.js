@@ -77,6 +77,7 @@ async function fetchAllRows(buildQuery, pageSize = 1000) {
 
 function actorFromReq(req) {
   return (
+    normalizeText(req.user?.nick_nama) ||
     normalizeText(req.user?.nama) ||
     normalizeText(req.user?.email) ||
     normalizeText(req.headers['x-heybat-actor']) ||
@@ -695,6 +696,8 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
               board_key: `pending:${row.kode_pbf}`,
               status: 'menunggu_verifikasi',
               matching_id: m.id,
+              dipilih_oleh: m.dipilih_oleh || null,
+              diusulkan_oleh: m.diusulkan_oleh || null,
               pricelist: {
                 ...row,
                 pbf_id: pbfId,
@@ -715,6 +718,8 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
               board_key: `rejected:${row.kode_pbf}`,
               status: 'ditolak',
               matching_id: m.id,
+              dipilih_oleh: m.dipilih_oleh || null,
+              diusulkan_oleh: m.diusulkan_oleh || null,
               pricelist: {
                 ...row,
                 pbf_id: pbfId,

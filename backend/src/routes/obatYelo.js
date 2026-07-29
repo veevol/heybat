@@ -70,6 +70,9 @@ function isCheckViolation(error) {
 
 function actorFromReq(req) {
   return (
+    normalizeText(req.user?.nick_nama) ||
+    normalizeText(req.user?.nama) ||
+    normalizeText(req.user?.email) ||
     normalizeText(req.headers['x-heybat-actor']) ||
     normalizeText(req.body?.actor) ||
     'staf'

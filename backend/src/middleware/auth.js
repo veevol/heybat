@@ -1,6 +1,6 @@
 const { supabase } = require('../db');
 
-const USER_SELECT = 'id, email, nama, status, is_owner, group_id';
+const USER_SELECT = 'id, email, nama, nick_nama, status, is_owner, group_id';
 
 function extractBearerToken(req) {
   const header = req.headers.authorization || req.headers.Authorization;
@@ -29,11 +29,18 @@ function profileFromAuthUser(authUser) {
 }
 
 async function fetchAppUser(id) {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('users')
     .select(USER_SELECT)
     .eq('id', id)
     .maybeSingle();
+  if (error && /nick_nama/i.test(error.message || '')) {
+    ({ data, error } = await supabase
+      .from('users')
+      .select('id, email, nama, status, is_owner, group_id')
+      .eq('id', id)
+      .maybeSingle());
+  }
   if (error) throw error;
   return data;
 }

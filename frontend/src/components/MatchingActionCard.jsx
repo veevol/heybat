@@ -44,6 +44,12 @@ export default function MatchingActionCard({
   const isRejected = kind === 'rejected';
   /** Layout padat sama Menunggu / Belum Match / No Match */
   const useAwaitLayout = isPending || isUnmatched || isRejected;
+  const diusulkan =
+    typeof card.diusulkan_oleh === 'string' ? card.diusulkan_oleh.trim() : '';
+  const dipilih =
+    typeof card.dipilih_oleh === 'string' ? card.dipilih_oleh.trim() : '';
+  const pengajuLabel =
+    dipilih || (diusulkan && diusulkan.toLowerCase() !== 'sistem' ? diusulkan : '');
 
   return (
     <article className="flex flex-col gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface p-2.5 shadow-sm shadow-black/10 transition hover:bg-bg-surface-hover">
@@ -54,6 +60,11 @@ export default function MatchingActionCard({
           {badge.label}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
+          {(isPending || isRejected) && pengajuLabel ? (
+            <span className="max-w-[7.5rem] truncate text-[11px] font-normal leading-none text-text-muted">
+              Oleh: {pengajuLabel}
+            </span>
+          ) : null}
           {useAwaitLayout && inisialPbf ? (
             <span className="rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
               {inisialPbf}
