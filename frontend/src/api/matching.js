@@ -106,17 +106,19 @@ export async function listUnmatched({ pbf_id } = {}) {
 }
 
 /**
- * Board pricelist+matching untuk satu PBF.
+ * Board pricelist+matching untuk satu PBF (filter/search/paginate di backend).
  * @param {string} pbfId
- * @param {{ status?: string, q?: string, limit?: number, offset?: number, tanggalUpload?: string|null, tanggalPricelist?: string|null }} [opts]
+ * @param {{ status?: string, q?: string, search?: string, limit?: number, offset?: number, page?: number, tanggalUpload?: string|null, tanggalPricelist?: string|null }} [opts]
  */
 export async function getMatchingBoard(
   pbfId,
   {
     status = 'all',
     q = '',
+    search = '',
     limit = 40,
     offset = 0,
+    page = null,
     tanggalUpload = null,
     tanggalPricelist = null,
   } = {}
@@ -127,7 +129,12 @@ export async function getMatchingBoard(
     limit: String(limit),
     offset: String(offset),
   });
-  if (q) qs.set('q', q);
+  const term = search || q;
+  if (term) {
+    qs.set('q', term);
+    qs.set('search', term);
+  }
+  if (page != null) qs.set('page', String(page));
   if (tanggalUpload) qs.set('tanggal_upload', tanggalUpload);
   if (tanggalPricelist) qs.set('tanggal_pricelist', tanggalPricelist);
   return apiJson(`${API_BASE}/board?${qs.toString()}`);

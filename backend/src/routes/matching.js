@@ -225,16 +225,27 @@ async function fetchHiddenKodePbf(pbfId) {
   return hidden;
 }
 
-async function fetchCacheMap(pbfId) {
-  const rows = await fetchAllRows(() =>
-    supabase
+async function fetchCacheMap(pbfId, kodeList = null) {
+  let list;
+  if (kodeList?.length) {
+    const { data, error } = await supabase
       .from('matching_kandidat_cache')
       .select('pricelist_kode_pbf, kandidat, dihitung_pada')
       .eq('pricelist_pbf_id', pbfId)
-  );
+      .in('pricelist_kode_pbf', kodeList);
+    if (error) throw error;
+    list = data || [];
+  } else {
+    list = await fetchAllRows(() =>
+      supabase
+        .from('matching_kandidat_cache')
+        .select('pricelist_kode_pbf, kandidat, dihitung_pada')
+        .eq('pricelist_pbf_id', pbfId)
+    );
+  }
   const map = new Map();
   let newest = null;
-  for (const row of rows) {
+  for (const row of list) {
     map.set(row.pricelist_kode_pbf, row);
     if (!newest || new Date(row.dihitung_pada) > new Date(newest)) {
       newest = row.dihitung_pada;
@@ -494,32 +505,41 @@ router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req,
 });
 
 /**
- * GET /api/matching/board?pbf_id=&status=&q=&tanggal_upload=
- * status: all | match | menunggu | belum | no_match
- * tanggal_upload (opsional): pakai snapshot batch history untuk list/qty/harga;
- *   status matching tetap dari tabel matching saat ini.
- * Cards:
- *  - kind=match: grup per obat Yelo (terverifikasi) + semua baris pricelist match
- *  - kind=pending|unmatched|rejected: 1 card per kode PBF
+ * GET /api/matching/board
+ * Query: pbf_id|supplier_id, status, q|search, page|offset, limit, tanggal_upload
+ * status: all | match | menunggu | belum | belum_diajukan | no_match | no_data
+ * Filter/search/paginate di Postgres (RPC); Node hanya hydrate kartu halaman ini.
  */
 router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
   try {
-    const pbfId = normalizeText(req.query.pbf_id);
+    const pbfId =
+      normalizeText(req.query.pbf_id) || normalizeText(req.query.supplier_id);
     if (!pbfId) {
-      return res.status(400).json({ error: 'pbf_id wajib diisi' });
+      return res.status(400).json({ error: 'pbf_id (atau supplier_id) wajib diisi' });
     }
 
-    const statusFilter = normalizeText(req.query.status) || 'all';
+    let statusFilter = normalizeText(req.query.status) || 'all';
+    if (statusFilter === 'belum_diajukan' || statusFilter === 'blm_diajukan') {
+      statusFilter = 'belum';
+    } else if (statusFilter === 'no_data' || statusFilter === 'nodata') {
+      statusFilter = 'no_match';
+    }
     const allowed = new Set(['all', 'match', 'menunggu', 'belum', 'no_match']);
     if (!allowed.has(statusFilter)) {
       return res.status(400).json({ error: 'status filter tidak valid' });
     }
-    const q = String(req.query.q || '').trim().toLowerCase();
+
+    const q = String(req.query.search || req.query.q || '').trim();
     const tanggalUpload = normalizeText(req.query.tanggal_upload);
     const limitRaw = parseInt(String(req.query.limit || '40'), 10);
+    const pageRaw = parseInt(String(req.query.page || ''), 10);
     const offsetRaw = parseInt(String(req.query.offset || '0'), 10);
     const limit = Number.isFinite(limitRaw) ? Math.min(100, Math.max(1, limitRaw)) : 40;
-    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
+    const offset = Number.isFinite(pageRaw) && pageRaw >= 1
+      ? (pageRaw - 1) * limit
+      : Number.isFinite(offsetRaw)
+        ? Math.max(0, offsetRaw)
+        : 0;
 
     const { data: supplier, error: supplierError } = await supabase
       .from('supplier')
@@ -531,273 +551,190 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       return res.status(404).json({ error: 'PBF tidak ditemukan' });
     }
 
-    const needMatch = statusFilter === 'all' || statusFilter === 'match';
-    const needPending = statusFilter === 'all' || statusFilter === 'menunggu';
-    const needUnmatched = statusFilter === 'all' || statusFilter === 'belum';
-    const needRejected = statusFilter === 'all' || statusFilter === 'no_match';
-    const needActionCards = needPending || needUnmatched || needRejected;
+    const [countsRes, pageRes] = await Promise.all([
+      supabase.rpc('matching_board_counts', {
+        p_pbf_id: pbfId,
+        p_tanggal_upload: tanggalUpload || null,
+      }),
+      supabase.rpc('matching_board_page', {
+        p_pbf_id: pbfId,
+        p_status: statusFilter,
+        p_search: q || null,
+        p_limit: limit,
+        p_offset: offset,
+        p_tanggal_upload: tanggalUpload || null,
+      }),
+    ]);
+    if (countsRes.error) throw countsRes.error;
+    if (pageRes.error) throw pageRes.error;
 
-    const { loadLatestStokRingkasanMap } = require('../lib/stokRingkasan');
+    const counts = countsRes.data || {
+      match: 0,
+      menunggu: 0,
+      belum: 0,
+      no_match: 0,
+    };
+    const pagePayload = pageRes.data || {};
+    const totalCount = Number(pagePayload.total_count) || 0;
+    const hasMore = Boolean(pagePayload.has_more);
+    const items = Array.isArray(pagePayload.items) ? pagePayload.items : [];
 
-    // Data dasar selalu; stok/supplier-all hanya bila perlu card Match
-    const [latest, matchings, cacheInfo, stokMap] = await Promise.all([
-      fetchPricelistForBoard(pbfId, tanggalUpload),
-      fetchAllRows(() =>
-        supabase
-          .from('matching')
-          .select(SELECT_MATCHING)
-          .eq('pricelist_pbf_id', pbfId)
-      ),
+    const matchItems = items.filter((it) => it.kind === 'match');
+    const actionItems = items.filter((it) => it.kind !== 'match');
+    const yeloCodes = matchItems.map((it) => it.kode_obat_yelo).filter(Boolean);
+    const actionKodes = actionItems
+      .map((it) => it.pricelist?.kode_pbf)
+      .filter(Boolean);
+
+    const needActionCards = actionItems.length > 0;
+    const [cacheInfo, stokMap, crossMatchings] = await Promise.all([
       needActionCards
-        ? fetchCacheMap(pbfId)
+        ? fetchCacheMap(pbfId, actionKodes)
         : Promise.resolve({ map: new Map(), newest: null }),
-      needMatch
-        ? loadLatestStokRingkasanMap().catch(() => new Map())
+      yeloCodes.length
+        ? (async () => {
+            try {
+              const { data: latestBatch } = await supabase
+                .from('stok_upload_batch')
+                .select('id')
+                .order('tanggal_upload', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (!latestBatch) return new Map();
+              const { data: stokRows, error: stokErr } = await supabase
+                .from('stok_obat')
+                .select('kode_obat, harga_1, harga_3')
+                .eq('upload_batch_id', latestBatch.id)
+                .in('kode_obat', yeloCodes);
+              if (stokErr) throw stokErr;
+              const map = new Map();
+              for (const row of stokRows || []) {
+                if (!row.kode_obat || map.has(row.kode_obat)) continue;
+                map.set(row.kode_obat, {
+                  harga_1: row.harga_1 ?? null,
+                  harga_3: row.harga_3 ?? null,
+                });
+              }
+              return map;
+            } catch {
+              return new Map();
+            }
+          })()
         : Promise.resolve(new Map()),
+      yeloCodes.length
+        ? fetchAllRows(() =>
+            supabase
+              .from('matching')
+              .select(SELECT_MATCHING)
+              .eq('status', 'terverifikasi')
+              .in('kode_obat_yelo', yeloCodes)
+          )
+        : Promise.resolve([]),
     ]);
 
-    const snapshotKodes = new Set(latest.map((r) => r.kode_pbf));
-
-    // Active matching per kode for this PBF (prefer terverifikasi > menunggu > ditolak skip)
-    const byKode = new Map();
-    for (const row of matchings) {
-      const prev = byKode.get(row.pricelist_kode_pbf);
-      if (!prev) {
-        byKode.set(row.pricelist_kode_pbf, row);
-        continue;
-      }
-      const rank = (s) =>
-        s === 'terverifikasi' ? 3 : s === 'menunggu_verifikasi' ? 2 : s === 'ditolak' ? 1 : 0;
-      if (rank(row.status) > rank(prev.status)) {
-        byKode.set(row.pricelist_kode_pbf, row);
-      }
+    // Snapshot kode PBF ini (untuk history filter baris match)
+    let snapshotKodes = null;
+    if (tanggalUpload) {
+      const snapRows = await fetchPricelistByUpload(pbfId, tanggalUpload);
+      snapshotKodes = new Set(snapRows.map((r) => r.kode_pbf));
     }
 
-    // Match groups: 1 obat Yelo per kode PBF aktif (byKode),
-    // jangan hitung semua baris terverifikasi dobel ke Yelo berbeda.
-    const yeloCodesNeeded = new Set();
-    for (const row of latest) {
-      const m = byKode.get(row.kode_pbf);
-      if (m?.status === 'terverifikasi' && m.kode_obat_yelo) {
-        yeloCodesNeeded.add(m.kode_obat_yelo);
-      }
-    }
-
-    // Counts murah (tanpa scoring kandidat / cross-PBF enrich)
-    let countMenunggu = 0;
-    let countBelum = 0;
-    let countNoMatch = 0;
-    for (const row of latest) {
-      const m = byKode.get(row.kode_pbf);
-      if (m?.status === 'terverifikasi') continue;
-      if (m?.status === 'menunggu_verifikasi') countMenunggu += 1;
-      else if (m?.status === 'ditolak' && !m.kode_obat_yelo) countNoMatch += 1;
-      else countBelum += 1;
-    }
-    const counts = {
-      match: yeloCodesNeeded.size,
-      menunggu: countMenunggu,
-      belum: countBelum,
-      no_match: countNoMatch,
-    };
-
-    // --- Match cards (hanya bila filter butuh) ---
-    const matchCards = [];
-    if (needMatch && yeloCodesNeeded.size) {
-      const codes = [...yeloCodesNeeded];
-      const crossMatchings = await fetchAllRows(() =>
-        supabase
-          .from('matching')
-          .select(SELECT_MATCHING)
-          .eq('status', 'terverifikasi')
-          .in('kode_obat_yelo', codes)
-      );
-
-      const needPl = new Map(); // pbfId -> Set(kode)
+    const plLookup = new Map();
+    if (crossMatchings.length) {
+      const needPl = new Map();
       for (const row of crossMatchings) {
         if (!needPl.has(row.pricelist_pbf_id)) needPl.set(row.pricelist_pbf_id, new Set());
         needPl.get(row.pricelist_pbf_id).add(row.pricelist_kode_pbf);
       }
-      const plLookup = new Map(); // `${pbfId}::${kode}` -> row
       await Promise.all(
         [...needPl.entries()].map(async ([id, kodeSet]) => {
-          const rows =
-            tanggalUpload && id === pbfId
-              ? await fetchPricelistByUpload(id, tanggalUpload)
-              : await fetchLatestPricelistByPbf(id);
-          for (const r of rows) {
-            if (kodeSet.has(r.kode_pbf)) plLookup.set(`${id}::${r.kode_pbf}`, r);
+          const kodes = [...kodeSet];
+          let q = supabase
+            .from('pricelist')
+            .select(
+              'kode_pbf, nama_barang, satuan, qty, harga_dasar, catatan_kondisi, diskon, tanggal_upload, auto_kosong, dihapus_pada, id'
+            )
+            .eq('pbf_id', id)
+            .in('kode_pbf', kodes)
+            .order('tanggal_upload', { ascending: false })
+            .order('id', { ascending: false });
+          if (tanggalUpload && id === pbfId) {
+            q = q.eq('tanggal_upload', tanggalUpload);
+          }
+          const { data: rows, error } = await q;
+          if (error) throw error;
+          const seen = new Set();
+          for (const r of rows || []) {
+            if (r.dihapus_pada) continue;
+            if (tanggalUpload && id === pbfId && r.auto_kosong) continue;
+            if (seen.has(r.kode_pbf)) continue;
+            seen.add(r.kode_pbf);
+            plLookup.set(`${id}::${r.kode_pbf}`, r);
           }
         })
       );
+    }
 
-      const obatByKode = new Map();
-      for (const row of crossMatchings) {
-        if (row.obat?.kode_obat) obatByKode.set(row.obat.kode_obat, row.obat);
-      }
+    const obatByKode = new Map();
+    for (const row of crossMatchings) {
+      if (row.obat?.kode_obat) obatByKode.set(row.obat.kode_obat, row.obat);
+    }
 
-      for (const kodeObat of yeloCodesNeeded) {
-        const obat = obatByKode.get(kodeObat) || { kode_obat: kodeObat, nama_obat: kodeObat };
-        const lines = crossMatchings
-          .filter((m) => m.kode_obat_yelo === kodeObat)
-          .filter((m) => {
-            // History: sembunyikan baris PBF ini jika kode tidak ada di snapshot
-            if (!tanggalUpload) return true;
-            if (m.pricelist_pbf_id !== pbfId) return true;
-            return snapshotKodes.has(m.pricelist_kode_pbf);
-          })
-          .map((m) => {
-            const pl = plLookup.get(`${m.pricelist_pbf_id}::${m.pricelist_kode_pbf}`);
-            const sup = m.supplier;
-            return {
-              matching_id: m.id,
-              pricelist_pbf_id: m.pricelist_pbf_id,
-              pricelist_kode_pbf: m.pricelist_kode_pbf,
-              inisial: sup?.inisial || null,
-              nama_barang: pl?.nama_barang || m.pricelist_kode_pbf,
-              satuan: pl?.satuan || null,
-              qty: pl?.qty ?? null,
-              harga_dasar: pl?.harga_dasar ?? null,
-              catatan_kondisi: displayCatatanKondisi(pl),
-              diskon: pl?.diskon || null,
-            };
-          });
-
-        const stok = stokMap.get(kodeObat) || null;
-        matchCards.push({
-          kind: 'match',
-          board_key: `match:${kodeObat}`,
-          status: 'terverifikasi',
-          obat: {
-            ...obat,
-            golongan: obat.golongan || null,
-            harga_1: stok?.harga_1 ?? null,
-            harga_3: stok?.harga_3 ?? null,
-          },
-          pricelist_rows: lines,
+    const matchCardsByYelo = new Map();
+    for (const kodeObat of yeloCodes) {
+      const obat = obatByKode.get(kodeObat) || { kode_obat: kodeObat, nama_obat: kodeObat };
+      const lines = crossMatchings
+        .filter((m) => m.kode_obat_yelo === kodeObat)
+        .filter((m) => {
+          if (!tanggalUpload) return true;
+          if (m.pricelist_pbf_id !== pbfId) return true;
+          return snapshotKodes.has(m.pricelist_kode_pbf);
+        })
+        .map((m) => {
+          const pl = plLookup.get(`${m.pricelist_pbf_id}::${m.pricelist_kode_pbf}`);
+          const sup = m.supplier;
+          return {
+            matching_id: m.id,
+            pricelist_pbf_id: m.pricelist_pbf_id,
+            pricelist_kode_pbf: m.pricelist_kode_pbf,
+            inisial: sup?.inisial || null,
+            nama_barang: pl?.nama_barang || m.pricelist_kode_pbf,
+            satuan: pl?.satuan || null,
+            qty: pl?.qty ?? null,
+            harga_dasar: pl?.harga_dasar ?? null,
+            catatan_kondisi: displayCatatanKondisi(pl),
+            diskon: pl?.diskon || null,
+          };
         });
-      }
-    }
-
-    // --- Action cards: shell dulu (tanpa kandidat), hydrate hanya untuk halaman ---
-    const pendingCards = [];
-    const unmatchedCards = [];
-    const rejectedCards = [];
-
-    if (needActionCards) {
-      for (const row of latest) {
-        const m = byKode.get(row.kode_pbf);
-        if (m?.status === 'terverifikasi') continue;
-
-        if (m?.status === 'menunggu_verifikasi') {
-          if (needPending) {
-            pendingCards.push({
-              kind: 'pending',
-              board_key: `pending:${row.kode_pbf}`,
-              status: 'menunggu_verifikasi',
-              matching_id: m.id,
-              dipilih_oleh: m.dipilih_oleh || null,
-              diusulkan_oleh: m.diusulkan_oleh || null,
-              pricelist: {
-                ...row,
-                pbf_id: pbfId,
-                catatan_kondisi: displayCatatanKondisi(row),
-              },
-              selected_obat: m.obat || null,
-              kode_obat_yelo: m.kode_obat_yelo,
-              kandidat: null,
-            });
-          }
-          continue;
-        }
-
-        if (m?.status === 'ditolak' && !m.kode_obat_yelo) {
-          if (needRejected) {
-            rejectedCards.push({
-              kind: 'rejected',
-              board_key: `rejected:${row.kode_pbf}`,
-              status: 'ditolak',
-              matching_id: m.id,
-              dipilih_oleh: m.dipilih_oleh || null,
-              diusulkan_oleh: m.diusulkan_oleh || null,
-              pricelist: {
-                ...row,
-                pbf_id: pbfId,
-                catatan_kondisi: displayCatatanKondisi(row),
-              },
-              selected_obat: null,
-              kode_obat_yelo: null,
-              kandidat: null,
-            });
-          }
-          continue;
-        }
-
-        if (needUnmatched) {
-          unmatchedCards.push({
-            kind: 'unmatched',
-            board_key: `unmatched:${row.kode_pbf}`,
-            status: 'belum',
-            matching_id: m?.status === 'ditolak' ? m.id : null,
-            pricelist: {
-              ...row,
-              pbf_id: pbfId,
-              catatan_kondisi: displayCatatanKondisi(row),
-            },
-            selected_obat: null,
-            kode_obat_yelo: null,
-            kandidat: null,
-          });
-        }
-      }
-    }
-
-    function matchesQuery(card) {
-      if (!q) return true;
-      if (card.kind === 'match') {
-        const name = String(card.obat?.nama_obat || '').toLowerCase();
-        const kode = String(card.obat?.kode_obat || '').toLowerCase();
-        if (name.includes(q) || kode.includes(q)) return true;
-        return (card.pricelist_rows || []).some((r) =>
-          String(r.nama_barang || '').toLowerCase().includes(q)
-        );
-      }
-      const nama = String(card.pricelist?.nama_barang || '').toLowerCase();
-      const kode = String(card.pricelist?.kode_pbf || '').toLowerCase();
-      return nama.includes(q) || kode.includes(q);
-    }
-
-    let cards = [];
-    if (needMatch) cards.push(...matchCards);
-    if (needPending) cards.push(...pendingCards);
-    if (needUnmatched) cards.push(...unmatchedCards);
-    if (needRejected) cards.push(...rejectedCards);
-
-    cards = cards.filter(matchesQuery);
-
-    // Sort: match A-Z obat, then pending/unmatched/rejected A-Z nama barang
-    cards.sort((a, b) => {
-      const rank = (c) =>
-        c.kind === 'match' ? 0 : c.kind === 'pending' ? 1 : c.kind === 'unmatched' ? 2 : 3;
-      const dr = rank(a) - rank(b);
-      if (dr !== 0) return dr;
-      const na =
-        a.kind === 'match'
-          ? a.obat?.nama_obat
-          : a.pricelist?.nama_barang;
-      const nb =
-        b.kind === 'match'
-          ? b.obat?.nama_obat
-          : b.pricelist?.nama_barang;
-      return String(na || '').localeCompare(String(nb || ''), 'id', {
-        sensitivity: 'base',
+      const stok = stokMap.get(kodeObat) || null;
+      matchCardsByYelo.set(kodeObat, {
+        kind: 'match',
+        board_key: `match:${kodeObat}`,
+        status: 'terverifikasi',
+        obat: {
+          ...obat,
+          golongan: obat.golongan || null,
+          harga_1: stok?.harga_1 ?? null,
+          harga_3: stok?.harga_3 ?? null,
+        },
+        pricelist_rows: lines,
       });
-    });
+    }
 
-    const total = cards.length;
-    const page = cards.slice(offset, offset + limit);
+    // Hydrate pending matching rows (obat) hanya untuk halaman
+    const pendingIds = actionItems
+      .filter((it) => it.kind === 'pending' && it.matching_id)
+      .map((it) => it.matching_id);
+    const matchingById = new Map();
+    if (pendingIds.length) {
+      const { data: pendingRows, error: pendingErr } = await supabase
+        .from('matching')
+        .select(SELECT_MATCHING)
+        .in('id', pendingIds);
+      if (pendingErr) throw pendingErr;
+      for (const row of pendingRows || []) matchingById.set(row.id, row);
+    }
 
-    // Scoring kandidat hanya untuk baris di halaman ini (bukan seluruh pricelist)
     let obatListForScore = null;
     async function kandidatFor(row) {
       const cached = cacheInfo.map.get(row.kode_pbf);
@@ -806,12 +743,60 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       return scoreCandidates(row.nama_barang, obatListForScore);
     }
 
-    await Promise.all(
-      page.map(async (card) => {
-        if (card.kind === 'match' || !card.pricelist) return;
-        card.kandidat = await kandidatFor(card.pricelist);
-      })
-    );
+    const cards = [];
+    for (const it of items) {
+      if (it.kind === 'match') {
+        const card = matchCardsByYelo.get(it.kode_obat_yelo);
+        if (card) cards.push(card);
+        continue;
+      }
+
+      const pl = {
+        ...(it.pricelist || {}),
+        pbf_id: pbfId,
+        catatan_kondisi: displayCatatanKondisi(it.pricelist || {}),
+      };
+      const kodePbf = pl.kode_pbf;
+      if (it.kind === 'pending') {
+        const m = matchingById.get(it.matching_id) || null;
+        cards.push({
+          kind: 'pending',
+          board_key: `pending:${kodePbf}`,
+          status: 'menunggu_verifikasi',
+          matching_id: it.matching_id,
+          dipilih_oleh: it.dipilih_oleh || m?.dipilih_oleh || null,
+          diusulkan_oleh: it.diusulkan_oleh || m?.diusulkan_oleh || null,
+          pricelist: pl,
+          selected_obat: m?.obat || null,
+          kode_obat_yelo: it.kode_obat_yelo || m?.kode_obat_yelo || null,
+          kandidat: await kandidatFor(pl),
+        });
+      } else if (it.kind === 'rejected') {
+        cards.push({
+          kind: 'rejected',
+          board_key: `rejected:${kodePbf}`,
+          status: 'ditolak',
+          matching_id: it.matching_id || null,
+          dipilih_oleh: it.dipilih_oleh || null,
+          diusulkan_oleh: it.diusulkan_oleh || null,
+          pricelist: pl,
+          selected_obat: null,
+          kode_obat_yelo: null,
+          kandidat: await kandidatFor(pl),
+        });
+      } else {
+        cards.push({
+          kind: 'unmatched',
+          board_key: `unmatched:${kodePbf}`,
+          status: 'belum',
+          matching_id: it.matching_id || null,
+          pricelist: pl,
+          selected_obat: null,
+          kode_obat_yelo: null,
+          kandidat: await kandidatFor(pl),
+        });
+      }
+    }
 
     let snapshotMeta = null;
     if (tanggalUpload) {
@@ -819,7 +804,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       snapshotMeta = {
         tanggal_upload: tanggalUpload,
         tanggal_pricelist: tanggalPricelist || null,
-        item_count: latest.length,
+        item_count: snapshotKodes ? snapshotKodes.size : null,
       };
     }
 
@@ -827,14 +812,18 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       supplier,
       filter: statusFilter,
       q: q || null,
+      search: q || null,
       tanggal_upload: tanggalUpload || null,
       snapshot: snapshotMeta,
       counts,
-      total,
+      total: totalCount,
+      total_count: totalCount,
+      has_more: hasMore,
       offset,
       limit,
+      page: Math.floor(offset / limit) + 1,
       cache_dihitung_pada: cacheInfo.newest,
-      cards: page,
+      cards,
     });
   } catch (err) {
     console.error('[GET /matching/board]', err);
