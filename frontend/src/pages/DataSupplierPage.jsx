@@ -6,8 +6,10 @@ import {
   listSuppliersDashboard,
   updateSupplier,
 } from '../api/suppliers';
+import { getMatchingProgressBulanan } from '../api/matching';
 import AppShell from '../components/layout/AppShell';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
+import MatchingProgressCard from '../components/MatchingProgressCard';
 import SupplierCard from '../components/SupplierCard';
 import SupplierDetailSheet from '../components/SupplierDetailSheet';
 import SupplierFormModal from '../components/SupplierFormModal';
@@ -62,6 +64,7 @@ export default function DataSupplierPage() {
   const canEdit = hasAccess('data-supplier', 'edit');
   const canHapus = hasAccess('data-supplier', 'hapus');
   const [suppliers, setSuppliers] = useState([]);
+  const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [selected, setSelected] = useState(null);
@@ -85,8 +88,12 @@ export default function DataSupplierPage() {
     setLoading(true);
     setLoadError('');
     try {
-      const data = await listSuppliersDashboard();
+      const [data, progressData] = await Promise.all([
+        listSuppliersDashboard(),
+        getMatchingProgressBulanan().catch(() => null),
+      ]);
       setSuppliers(data);
+      setProgress(progressData);
       return data;
     } catch (err) {
       setLoadError(err.message || 'Gagal memuat supplier');
@@ -227,25 +234,33 @@ export default function DataSupplierPage() {
       ) : null}
 
       {!loading && !loadError && suppliers.length === 0 ? (
-        <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center">
-          <p className="text-[13px] text-text-secondary">
-            Belum ada supplier. Tambahkan yang pertama supaya pricelist nanti siap.
-          </p>
-          {canTambah ? (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white sm:w-auto"
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.5} />
-              Tambah Supplier
-            </button>
+        <div className="grid grid-cols-1 gap-1.5">
+          {progress?.users?.length ? (
+            <MatchingProgressCard data={progress} />
           ) : null}
+          <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center">
+            <p className="text-[13px] text-text-secondary">
+              Belum ada supplier. Tambahkan yang pertama supaya pricelist nanti siap.
+            </p>
+            {canTambah ? (
+              <button
+                type="button"
+                onClick={openCreate}
+                className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white sm:w-auto"
+              >
+                <Plus className="h-4 w-4" strokeWidth={2.5} />
+                Tambah Supplier
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
       {!loading && !loadError && suppliers.length > 0 ? (
         <div className="grid grid-cols-1 gap-1.5">
+          {progress?.users?.length ? (
+            <MatchingProgressCard data={progress} />
+          ) : null}
           {suppliers.map((supplier) => (
             <SupplierCard
               key={supplier.id}

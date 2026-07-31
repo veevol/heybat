@@ -105,10 +105,15 @@ export async function listUnmatched({ pbf_id } = {}) {
   return apiJson(`${API_BASE}/unmatched${suffix}`);
 }
 
+/** Ranking progress matching per user untuk bulan berjalan (top 4). */
+export async function getMatchingProgressBulanan() {
+  return apiJson(`${API_BASE}/progress-bulanan`);
+}
+
 /**
  * Board pricelist+matching untuk satu PBF (filter/search/paginate di backend).
  * @param {string} pbfId
- * @param {{ status?: string, q?: string, search?: string, limit?: number, offset?: number, page?: number, tanggalUpload?: string|null, tanggalPricelist?: string|null }} [opts]
+ * @param {{ status?: string, q?: string, search?: string, limit?: number, offset?: number, page?: number, tanggalUpload?: string|null, tanggalPricelist?: string|null, oleh?: string|null }} [opts]
  */
 export async function getMatchingBoard(
   pbfId,
@@ -121,6 +126,7 @@ export async function getMatchingBoard(
     page = null,
     tanggalUpload = null,
     tanggalPricelist = null,
+    oleh = null,
   } = {}
 ) {
   const qs = new URLSearchParams({
@@ -137,6 +143,7 @@ export async function getMatchingBoard(
   if (page != null) qs.set('page', String(page));
   if (tanggalUpload) qs.set('tanggal_upload', tanggalUpload);
   if (tanggalPricelist) qs.set('tanggal_pricelist', tanggalPricelist);
+  if (oleh) qs.set('oleh', oleh);
   return apiJson(`${API_BASE}/board?${qs.toString()}`);
 }
 

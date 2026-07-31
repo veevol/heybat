@@ -504,10 +504,172 @@ router.get('/kandidat/:pbfId', requireMenuAksi('matching', 'lihat'), async (req,
   }
 });
 
+const SYSTEM_ACTORS = new Set(['sistem', 'system', 'staf']);
+const PROGRESS_STATUSES = ['menunggu_verifikasi', 'terverifikasi', 'ditolak'];
+const PROGRESS_TOP_N = 4;
+
+/** Bounds bulan berjalan di Asia/Jakarta (+07). */
+function jakartaMonthBounds(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  const start = new Date(
+    `${year}-${String(month).padStart(2, '0')}-01T00:00:00+07:00`
+  );
+  const endMonth = month === 12 ? 1 : month + 1;
+  const endYear = month === 12 ? year + 1 : year;
+  const end = new Date(
+    `${endYear}-${String(endMonth).padStart(2, '0')}-01T00:00:00+07:00`
+  );
+  const label = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jakarta',
+    month: 'short',
+    year: 'numeric',
+  }).format(now);
+  return { start, end, year, month, label };
+}
+
+function matchingActorNick(row) {
+  const dipilih = normalizeText(row?.dipilih_oleh);
+  if (dipilih && !SYSTEM_ACTORS.has(dipilih.toLowerCase())) return dipilih;
+  const diusulkan = normalizeText(row?.diusulkan_oleh);
+  if (diusulkan && !SYSTEM_ACTORS.has(diusulkan.toLowerCase())) return diusulkan;
+  return null;
+}
+
+function matchingActivityAt(row) {
+  const raw =
+    row?.tanggal_dipilih || row?.tanggal_diusulkan || row?.created_at || null;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * GET /api/matching/progress-bulanan
+ * Ranking top 4 user (aktif: FO, owner, staf) untuk matching bulan berjalan.
+ * no_match = staf "tidak cocok" (ditolak + tanpa kode Yelo)
+ * ditolak = owner tolak verifikasi (ditolak + punya kode Yelo)
+ * diajukan = match + menunggu + no_match + ditolak; sort match ↓ lalu diajukan ↓.
+ */
+router.get(
+  '/progress-bulanan',
+  requireMenuAksi('matching', 'lihat'),
+  async (_req, res) => {
+    try {
+      const { start, end, year, month, label } = jakartaMonthBounds();
+      const startIso = start.toISOString();
+
+      const { data: users, error: usersError } = await supabase
+        .from('users')
+        .select('id, nick_nama, nama, is_owner, status')
+        .eq('status', 'aktif');
+      if (usersError) throw usersError;
+
+      const people = (users || [])
+        .map((u) => {
+          const nick =
+            normalizeText(u.nick_nama) || normalizeText(u.nama) || null;
+          if (!nick) return null;
+          return {
+            id: u.id,
+            nick,
+            nickKey: nick.toLowerCase(),
+            is_owner: u.is_owner === true,
+          };
+        })
+        .filter(Boolean);
+
+      const byNick = new Map();
+      for (const p of people) {
+        if (!byNick.has(p.nickKey)) byNick.set(p.nickKey, p);
+      }
+
+      const tallies = new Map();
+      for (const p of byNick.values()) {
+        tallies.set(p.nickKey, {
+          user_id: p.id,
+          nick: p.nick,
+          match: 0,
+          menunggu: 0,
+          no_match: 0,
+          ditolak: 0,
+        });
+      }
+
+      // Ambil kandidat luas (gte awal bulan), filter ketat [start, end) di Node.
+      const rows = await fetchAllRows(() =>
+        supabase
+          .from('matching')
+          .select(
+            'status, kode_obat_yelo, dipilih_oleh, diusulkan_oleh, tanggal_dipilih, tanggal_diusulkan, created_at'
+          )
+          .in('status', PROGRESS_STATUSES)
+          .or(
+            [
+              `tanggal_dipilih.gte.${startIso}`,
+              `tanggal_diusulkan.gte.${startIso}`,
+              `created_at.gte.${startIso}`,
+            ].join(',')
+          )
+      );
+
+      for (const row of rows) {
+        const at = matchingActivityAt(row);
+        if (!at || at < start || at >= end) continue;
+        const actor = matchingActorNick(row);
+        if (!actor) continue;
+        const key = actor.toLowerCase();
+        const bucket = tallies.get(key);
+        if (!bucket) continue;
+        if (row.status === 'terverifikasi') bucket.match += 1;
+        else if (row.status === 'menunggu_verifikasi') bucket.menunggu += 1;
+        else if (row.status === 'ditolak') {
+          if (normalizeText(row.kode_obat_yelo)) bucket.ditolak += 1;
+          else bucket.no_match += 1;
+        }
+      }
+
+      const ranked = [...tallies.values()]
+        .map((row) => {
+          const diajukan =
+            row.match + row.menunggu + row.no_match + row.ditolak;
+          const pct = diajukan > 0 ? Math.round((row.match / diajukan) * 100) : 0;
+          return { ...row, diajukan, pct };
+        })
+        .sort((a, b) => {
+          if (b.match !== a.match) return b.match - a.match;
+          if (b.diajukan !== a.diajukan) return b.diajukan - a.diajukan;
+          return a.nick.localeCompare(b.nick, 'id', { sensitivity: 'base' });
+        })
+        .slice(0, PROGRESS_TOP_N);
+
+      const totalDiajukan = ranked.reduce((sum, r) => sum + r.diajukan, 0);
+
+      return res.json({
+        periode: { label, year, month },
+        zero_state: totalDiajukan === 0,
+        users: ranked,
+      });
+    } catch (err) {
+      console.error('[GET /matching/progress-bulanan]', err);
+      return res.status(500).json({
+        error: err.message || 'Gagal mengambil progress matching bulanan',
+      });
+    }
+  }
+);
+
 /**
  * GET /api/matching/board
- * Query: pbf_id|supplier_id, status, q|search, page|offset, limit, tanggal_upload
+ * Query: pbf_id|supplier_id, status, q|search, page|offset, limit, tanggal_upload, oleh
  * status: all | match | menunggu | belum | belum_diajukan | no_match | no_data
+ * oleh: filter nick dipilih_oleh / diusulkan_oleh (case-insensitive)
  * Filter/search/paginate di Postgres (RPC); Node hanya hydrate kartu halaman ini.
  */
 router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
@@ -530,6 +692,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
     }
 
     const q = String(req.query.search || req.query.q || '').trim();
+    const oleh = normalizeText(req.query.oleh);
     const tanggalUpload = normalizeText(req.query.tanggal_upload);
     const limitRaw = parseInt(String(req.query.limit || '40'), 10);
     const pageRaw = parseInt(String(req.query.page || ''), 10);
@@ -555,6 +718,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       supabase.rpc('matching_board_counts', {
         p_pbf_id: pbfId,
         p_tanggal_upload: tanggalUpload || null,
+        p_oleh: oleh || null,
       }),
       supabase.rpc('matching_board_page', {
         p_pbf_id: pbfId,
@@ -563,6 +727,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
         p_limit: limit,
         p_offset: offset,
         p_tanggal_upload: tanggalUpload || null,
+        p_oleh: oleh || null,
       }),
     ]);
     if (countsRes.error) throw countsRes.error;
@@ -772,16 +937,17 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
           kandidat: await kandidatFor(pl),
         });
       } else if (it.kind === 'rejected') {
+        const m = matchingById.get(it.matching_id) || null;
         cards.push({
           kind: 'rejected',
           board_key: `rejected:${kodePbf}`,
           status: 'ditolak',
           matching_id: it.matching_id || null,
-          dipilih_oleh: it.dipilih_oleh || null,
-          diusulkan_oleh: it.diusulkan_oleh || null,
+          dipilih_oleh: it.dipilih_oleh || m?.dipilih_oleh || null,
+          diusulkan_oleh: it.diusulkan_oleh || m?.diusulkan_oleh || null,
           pricelist: pl,
-          selected_obat: null,
-          kode_obat_yelo: null,
+          selected_obat: m?.obat || null,
+          kode_obat_yelo: it.kode_obat_yelo || m?.kode_obat_yelo || null,
           kandidat: await kandidatFor(pl),
         });
       } else {
@@ -811,6 +977,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
     return res.json({
       supplier,
       filter: statusFilter,
+      oleh: oleh || null,
       q: q || null,
       search: q || null,
       tanggal_upload: tanggalUpload || null,

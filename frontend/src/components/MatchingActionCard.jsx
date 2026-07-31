@@ -29,6 +29,7 @@ export default function MatchingActionCard({
   onTambahObat,
   onBatalkan,
   onSetujui,
+  onTolak,
   busy,
   canUsulkan,
   canTambahObat,
@@ -132,31 +133,45 @@ export default function MatchingActionCard({
           {isPending ? (
             <div className="flex w-full flex-wrap items-center justify-between gap-1.5">
               {isOwner ? (
-                <button
-                  type="button"
-                  disabled={busy || !selectedKode || !onSetujui}
-                  onClick={onSetujui}
-                  className="inline-flex items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
-                >
-                  {busy && <SubmitSpinner className="h-3.5 w-3.5" />}
-                  Setujui
-                </button>
-              ) : (
-                <span />
-              )}
-              {canUsulkan ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={onBatalkan}
-                  className="rounded-[4px] border border-border-subtle px-3 py-1.5 text-[13px] text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
-                >
-                  {busy && !isOwner ? (
-                    <SubmitSpinner className="inline h-3.5 w-3.5" />
-                  ) : (
-                    'Batalkan'
-                  )}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={busy || !selectedKode || !onSetujui}
+                    onClick={onSetujui}
+                    className="inline-flex items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
+                  >
+                    {busy && <SubmitSpinner className="h-3.5 w-3.5" />}
+                    Setujui
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || !onTolak}
+                    onClick={onTolak}
+                    className="rounded-[4px] border border-state-error/40 px-3 py-1.5 text-[13px] font-semibold text-state-error hover:bg-state-error/10 disabled:opacity-50"
+                  >
+                    {busy ? (
+                      <SubmitSpinner className="inline h-3.5 w-3.5" />
+                    ) : (
+                      'Ditolak'
+                    )}
+                  </button>
+                </>
+              ) : canUsulkan ? (
+                <>
+                  <span />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onBatalkan}
+                    className="rounded-[4px] border border-border-subtle px-3 py-1.5 text-[13px] text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+                  >
+                    {busy ? (
+                      <SubmitSpinner className="inline h-3.5 w-3.5" />
+                    ) : (
+                      'Batalkan'
+                    )}
+                  </button>
+                </>
               ) : null}
             </div>
           ) : null}

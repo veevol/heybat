@@ -90,8 +90,8 @@ function resolveObatMeta(kode, katalogMap, kandidat = []) {
   return { kode_obat: kode, nama_obat: kode };
 }
 
-function boardCacheKey(pbfId, status, q, tanggalUpload = '') {
-  return `${pbfId}|${status}|${q || ''}|${tanggalUpload || ''}`;
+function boardCacheKey(pbfId, status, q, tanggalUpload = '', oleh = '') {
+  return `${pbfId}|${status}|${q || ''}|${tanggalUpload || ''}|${oleh || ''}`;
 }
 
 function formatPricelistDate(isoDate) {
@@ -235,8 +235,8 @@ function buildRejectedCard(sourceCard, matching) {
     dipilih_oleh: matching.dipilih_oleh || null,
     diusulkan_oleh: matching.diusulkan_oleh || null,
     pricelist: sourceCard.pricelist,
-    selected_obat: null,
-    kode_obat_yelo: null,
+    selected_obat: matching.obat || sourceCard.selected_obat || null,
+    kode_obat_yelo: matching.kode_obat_yelo || null,
     kandidat: sourceCard.kandidat || [],
   };
 }
@@ -279,12 +279,13 @@ export default function MatchingPage() {
   const canUploadPricelist = hasAccess('pricelist-pbf', 'tambah');
   const isOwner = profile?.is_owner === true;
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [suppliers, setSuppliers] = useState([]);
   const [pbfId, setPbfId] = useState(() => searchParams.get('pbf_id') || '');
   const tanggalUpload = searchParams.get('tanggal_upload') || '';
   const tanggalPricelistParam = searchParams.get('tanggal_pricelist') || '';
+  const olehFilter = (searchParams.get('oleh') || '').trim();
   const [statusFilter, setStatusFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -370,6 +371,20 @@ export default function MatchingPage() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (olehFilter) {
+      setStatusFilter('all');
+      boardCacheRef.current.clear();
+    }
+  }, [olehFilter]);
+
+  function clearOlehFilter() {
+    const next = new URLSearchParams(searchParams);
+    next.delete('oleh');
+    setSearchParams(next, { replace: true });
+    boardCacheRef.current.clear();
+  }
+
+  useEffect(() => {
     listSuppliers()
       .then((data) => {
         setSuppliers(data || []);
@@ -453,7 +468,13 @@ export default function MatchingPage() {
       }
       const useStatus = status ?? statusFilter;
       const useQ = q ?? debouncedQ;
-      const cacheKey = boardCacheKey(id, useStatus, useQ, tanggalUpload);
+      const cacheKey = boardCacheKey(
+        id,
+        useStatus,
+        useQ,
+        tanggalUpload,
+        olehFilter
+      );
       const boardOpts = {
         status: useStatus,
         q: useQ,
@@ -461,6 +482,7 @@ export default function MatchingPage() {
         limit: PAGE,
         tanggalUpload: tanggalUpload || null,
         tanggalPricelist: tanggalPricelistParam || null,
+        oleh: olehFilter || null,
       };
 
       // Ganti filter/search: fetch page 1 dari server (bukan filter di memori)
@@ -521,6 +543,7 @@ export default function MatchingPage() {
       debouncedQ,
       tanggalUpload,
       tanggalPricelistParam,
+      olehFilter,
       showToast,
       applyBoardPayload,
     ]
@@ -537,7 +560,15 @@ export default function MatchingPage() {
       return;
     }
     loadBoard(pbfId);
-  }, [pbfId, statusFilter, debouncedQ, tanggalUpload, tanggalPricelistParam, loadBoard]);
+  }, [
+    pbfId,
+    statusFilter,
+    debouncedQ,
+    tanggalUpload,
+    tanggalPricelistParam,
+    olehFilter,
+    loadBoard,
+  ]);
 
   function invalidateBoardCache() {
     boardCacheRef.current.clear();
@@ -895,6 +926,112 @@ export default function MatchingPage() {
     return true;
   }
 
+  /** Owner tolak: pending → rejected (board No Match); progress = ditolak (punya kode Yelo). */
+  function applyLocalTolakSuccess(pendingCard, matching) {
+    if (!matching?.id || matching.status !== 'ditolak') return false;
+    const kodePbf = kodePbfOf(pendingCard);
+    if (!kodePbf || pendingCard.kind !== 'pending') return false;
+
+    const rejectedCard = buildRejectedCard(pendingCard, matching);
+    const deltas = { menunggu: -1, no_match: 1 };
+    const filter = statusFilterRef.current;
+    const dropFromList = filter === 'menunggu';
+
+    setCounts((prev) => applyCountDeltas(prev, deltas));
+
+    setCards((prev) => {
+      if (dropFromList) {
+        return prev.filter((c) => c.pricelist?.kode_pbf !== kodePbf);
+      }
+      if (filter === 'all' || filter === 'no_match') {
+        const idx = indexByKodePbf(prev, kodePbf);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = rejectedCard;
+          return next;
+        }
+        if (filter === 'no_match') {
+          return [rejectedCard, ...prev];
+        }
+      }
+      return prev.filter((c) => c.pricelist?.kode_pbf !== kodePbf);
+    });
+
+    if (dropFromList) {
+      const nextTotal = Math.max(0, (Number(totalCards) || 0) - 1);
+      const nextOffset = Math.max(0, (Number(offset) || 0) - 1);
+      setTotalCards(nextTotal);
+      setOffset(nextOffset);
+      setHasMore(nextOffset < nextTotal);
+    } else if (filter === 'no_match') {
+      const had = cards.some((c) => c.pricelist?.kode_pbf === kodePbf);
+      if (!had) {
+        const nextTotal = (Number(totalCards) || 0) + 1;
+        const nextOffset = (Number(offset) || 0) + 1;
+        setTotalCards(nextTotal);
+        setOffset(nextOffset);
+        setHasMore(nextOffset < nextTotal);
+      }
+    }
+
+    for (const [key, data] of [...boardCacheRef.current.entries()]) {
+      if (!key.startsWith(`${pbfId}|`)) continue;
+      const status = key.split('|')[1];
+      const prevCards = data.cards || [];
+      const idx = indexByKodePbf(prevCards, kodePbf);
+      const nextCounts = applyCountDeltas(data.counts || {}, deltas);
+
+      if (status === 'menunggu') {
+        if (idx < 0) {
+          boardCacheRef.current.set(key, { ...data, counts: nextCounts });
+          continue;
+        }
+        const nextCards = prevCards.filter((c) => c.pricelist?.kode_pbf !== kodePbf);
+        boardCacheRef.current.set(key, {
+          ...cacheAfterCardChange(data, nextCards, { dropped: true }),
+          counts: nextCounts,
+        });
+      } else if (status === 'no_match') {
+        if (idx >= 0) {
+          const nextCards = [...prevCards];
+          nextCards[idx] = rejectedCard;
+          boardCacheRef.current.set(key, {
+            ...data,
+            cards: nextCards,
+            counts: nextCounts,
+          });
+        } else {
+          const nextCards = [rejectedCard, ...prevCards];
+          const total = (Number(data.total_count ?? data.total) || 0) + 1;
+          boardCacheRef.current.set(key, {
+            ...data,
+            cards: nextCards,
+            total,
+            total_count: total,
+            has_more: nextCards.length < total,
+            counts: nextCounts,
+          });
+        }
+      } else if (status === 'all') {
+        if (idx >= 0) {
+          const nextCards = [...prevCards];
+          nextCards[idx] = rejectedCard;
+          boardCacheRef.current.set(key, {
+            ...data,
+            cards: nextCards,
+            counts: nextCounts,
+          });
+        } else {
+          boardCacheRef.current.set(key, { ...data, counts: nextCounts });
+        }
+      } else {
+        boardCacheRef.current.set(key, { ...data, counts: nextCounts });
+      }
+    }
+
+    return true;
+  }
+
   /** Batalkan sukses: pending → unmatched (DELETE 204 tidak kirim body). */
   function applyLocalBatalkanSuccess(pendingCard) {
     const kodePbf = kodePbfOf(pendingCard);
@@ -1167,6 +1304,30 @@ export default function MatchingPage() {
     }
   }
 
+  async function handleTolak(card) {
+    if (!card.matching_id || !isOwner) return;
+    if (submittingKeysRef.current.has(card.board_key)) return;
+
+    markSubmitting(card.board_key, true);
+    try {
+      const rejected = await verifikasiMatching(card.matching_id, 'tolak');
+      if (!rejected || rejected.status !== 'ditolak') {
+        showToast(
+          rejected?.status
+            ? `Status server: ${rejected.status} — tidak dipindah ke No Match`
+            : 'Respons Ditolak tidak valid'
+        );
+        return;
+      }
+      applyLocalTolakSuccess(card, rejected);
+      showToast('Pengajuan ditolak');
+    } catch (err) {
+      showToast(err.message || 'Gagal menolak');
+    } finally {
+      markSubmitting(card.board_key, false);
+    }
+  }
+
   async function openTambahObat(card) {
     const row = card.pricelist;
     setTambahRow(row);
@@ -1341,6 +1502,22 @@ export default function MatchingPage() {
             </p>
           ) : null}
 
+          {olehFilter ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex max-w-full items-center gap-1.5 rounded-[4px] bg-accent-navy/80 px-2 py-1 text-[11px] font-semibold text-white">
+                <span className="truncate">Oleh: {olehFilter}</span>
+                <button
+                  type="button"
+                  onClick={clearOlehFilter}
+                  className="shrink-0 rounded-[2px] px-1 text-white/80 hover:bg-white/15 hover:text-white"
+                  aria-label="Hapus filter oleh"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+          ) : null}
+
           <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
             {FILTERS.map((f) => {
               const active = statusFilter === f.id;
@@ -1376,7 +1553,9 @@ export default function MatchingPage() {
 
       {!pbfId ? (
         <p className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-4 text-[13px] text-text-muted">
-          Buka dari card supplier (tap progress matching) untuk melihat pricelist.
+          {olehFilter
+            ? `Filter Oleh: ${olehFilter}. Pilih supplier (dari card Supplier) untuk membuka board.`
+            : 'Buka dari card supplier (tap progress matching) untuk melihat pricelist.'}
         </p>
       ) : loading && cards.length === 0 ? (
         <MatchingCardSkeleton />
@@ -1405,7 +1584,9 @@ export default function MatchingPage() {
             )[0];
             const selectedKode =
               selections[kodePbf] ||
-              (card.kind === 'pending' ? card.kode_obat_yelo : '') ||
+              (card.kind === 'pending' || card.kind === 'rejected'
+                ? card.kode_obat_yelo
+                : '') ||
               topKandidat?.kode_obat_yelo ||
               '';
             const selectedMeta =
@@ -1431,6 +1612,7 @@ export default function MatchingPage() {
                 onTambahObat={() => openTambahObat(card)}
                 onBatalkan={() => handleBatalkan(card)}
                 onSetujui={() => handleSetujui(card)}
+                onTolak={() => handleTolak(card)}
                 busy={submittingKeys.has(card.board_key)}
                 canUsulkan={canUsulkan}
                 canTambahObat={canTambahObat}
