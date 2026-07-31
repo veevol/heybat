@@ -129,6 +129,35 @@ function matchesStokFilter(kebutuhan, stokSelected) {
   return false;
 }
 
+/** Date → YYYY-MM-DD (Asia/Jakarta). */
+function formatYmdJakarta(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function addDaysYmd(ymd, days) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/** Default rentang history dari pengaturan + tanggal penjualan terakhir. */
+function defaultHistoriRange(pengaturan) {
+  const defaultDays = Number(pengaturan?.periode_histori_hari) || 90;
+  const sampai =
+    pengaturan?.tanggal_penjualan_terakhir || formatYmdJakarta();
+  const dari = addDaysYmd(sampai, -(defaultDays - 1));
+  return { dari, sampai };
+}
+
 function matchesDefektaPill(obat, defektaPill) {
   if (!defektaPill || defektaPill === 'semua') return true;
   const pilihan = obat?.pilihan_disetujui || [];
@@ -164,7 +193,8 @@ export default function ForecastingPage() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [hitungOpen, setHitungOpen] = useState(false);
   const [periodeForecast, setPeriodeForecast] = useState(14);
-  const [periodeHistoriHitung, setPeriodeHistoriHitung] = useState(90);
+  const [historiDari, setHistoriDari] = useState('');
+  const [historiSampai, setHistoriSampai] = useState('');
   const [kategori, setKategori] = useState(['retail', 'mitra']);
   const [running, setRunning] = useState(false);
 
@@ -286,7 +316,9 @@ export default function ForecastingPage() {
     try {
       const row = await getForecastPengaturan();
       setPengaturan(row);
-      setPeriodeHistoriHitung(row?.periode_histori_hari ?? 90);
+      const range = defaultHistoriRange(row);
+      setHistoriDari(range.dari);
+      setHistoriSampai(range.sampai);
       return row;
     } catch (err) {
       showToast(err.message || 'Gagal memuat pengaturan');
@@ -510,8 +542,12 @@ export default function ForecastingPage() {
     setActionsOpen(false);
     setHitungOpen(true);
     loadRiwayat();
-    if (!pengaturan) await loadPengaturan();
-    else setPeriodeHistoriHitung(pengaturan.periode_histori_hari ?? 90);
+    const row = pengaturan || (await loadPengaturan());
+    if (row) {
+      const range = defaultHistoriRange(row);
+      setHistoriDari(range.dari);
+      setHistoriSampai(range.sampai);
+    }
   }
 
   function openPembuatanSp() {
@@ -535,16 +571,17 @@ export default function ForecastingPage() {
       nForecast <= 0 ||
       !Number.isInteger(nForecast)
     ) {
-      showToast('Periode forecast harus bilangan bulat > 0');
+      showToast('Periode proyeksi harus bilangan bulat > 0');
       return;
     }
-    const nHistori = Number(periodeHistoriHitung);
-    if (
-      !Number.isFinite(nHistori) ||
-      nHistori <= 0 ||
-      !Number.isInteger(nHistori)
-    ) {
-      showToast('Periode histori harus bilangan bulat > 0');
+    const dari = String(historiDari || '').trim();
+    const sampai = String(historiSampai || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dari) || !/^\d{4}-\d{2}-\d{2}$/.test(sampai)) {
+      showToast('Pilih periode history (dari–sampai)');
+      return;
+    }
+    if (dari > sampai) {
+      showToast('Tanggal awal history tidak boleh setelah tanggal akhir');
       return;
     }
 
@@ -552,7 +589,8 @@ export default function ForecastingPage() {
     try {
       const result = await jalankanForecast({
         periode_forecast_hari: nForecast,
-        periode_histori_hari: nHistori,
+        histori_dari: dari,
+        histori_sampai: sampai,
         kategori_penjualan: kategori,
       });
       const runId = result.forecast_run_id;
@@ -1062,8 +1100,10 @@ export default function ForecastingPage() {
         activeRunId={runIdParam}
         onSelectRun={openRun}
         canHitung={canTambah}
-        periodeHistori={periodeHistoriHitung}
-        onPeriodeHistoriChange={setPeriodeHistoriHitung}
+        historiDari={historiDari}
+        onHistoriDariChange={setHistoriDari}
+        historiSampai={historiSampai}
+        onHistoriSampaiChange={setHistoriSampai}
         periodeForecast={periodeForecast}
         onPeriodeForecastChange={setPeriodeForecast}
         kategori={kategori}

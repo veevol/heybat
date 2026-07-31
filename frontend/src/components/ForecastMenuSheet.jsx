@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
 
@@ -21,13 +22,78 @@ function formatTanggal(iso) {
   }
 }
 
+const MONTH_MMM = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'Mei',
+  'Jun',
+  'Jul',
+  'Agu',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Des',
+];
+
+/** YYYY-MM-DD → "01 Apr 2026" */
+function formatYmdShort(ymd) {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd || '—';
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dd = String(d).padStart(2, '0');
+  return `${dd} ${MONTH_MMM[m - 1]} ${y}`;
+}
+
 function FormRow({ label, children }) {
   return (
-    <div className="grid grid-cols-[150px_1fr] items-center gap-1.5">
+    <div className="grid grid-cols-[120px_1fr] items-center gap-1.5">
       <span className="text-[13px] leading-snug text-text-muted">
         {label}
       </span>
       <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/** Tampil dd mmm yyyy; tap buka native date picker via showPicker(). */
+function DateField({ value, onChange, disabled }) {
+  const inputRef = useRef(null);
+
+  function openPicker() {
+    const el = inputRef.current;
+    if (!el || disabled) return;
+    try {
+      if (typeof el.showPicker === 'function') {
+        el.showPicker();
+        return;
+      }
+    } catch {
+      /* fallback di bawah */
+    }
+    el.focus();
+    el.click();
+  }
+
+  return (
+    <div className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={openPicker}
+        disabled={disabled}
+        className="flex w-full items-center rounded-[4px] border border-border-subtle bg-bg-surface px-2 py-1.5 text-left text-[12px] tabular-nums text-text-primary hover:bg-bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className="truncate">{formatYmdShort(value)}</span>
+      </button>
+      <input
+        ref={inputRef}
+        type="date"
+        value={value || ''}
+        onChange={(e) => onChange?.(e.target.value)}
+        tabIndex={-1}
+        aria-hidden
+        className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+      />
     </div>
   );
 }
@@ -44,8 +110,10 @@ export default function ForecastMenuSheet({
   activeRunId = null,
   onSelectRun,
   canHitung = false,
-  periodeHistori,
-  onPeriodeHistoriChange,
+  historiDari,
+  onHistoriDariChange,
+  historiSampai,
+  onHistoriSampaiChange,
   periodeForecast,
   onPeriodeForecastChange,
   kategori = [],
@@ -89,6 +157,10 @@ export default function ForecastMenuSheet({
                   const kats = Array.isArray(run.kategori_penjualan)
                     ? run.kategori_penjualan
                     : [];
+                  const historiLabel =
+                    run.histori_dari && run.histori_sampai
+                      ? `${formatYmdShort(run.histori_dari)}–${formatYmdShort(run.histori_sampai)}`
+                      : `${run.periode_histori_hari}h`;
                   return (
                     <li key={run.id}>
                       <button
@@ -117,9 +189,10 @@ export default function ForecastMenuSheet({
                             );
                           })}
                         </div>
-                        <span className="shrink-0 text-[11px] text-text-muted">
-                          Periode {run.periode_forecast_hari}/
-                          {run.periode_histori_hari}
+                        <span className="shrink-0 text-right text-[10px] leading-tight text-text-muted">
+                          Proyeksi {run.periode_forecast_hari}h
+                          <br />
+                          {historiLabel}
                         </span>
                       </button>
                     </li>
@@ -139,27 +212,38 @@ export default function ForecastMenuSheet({
               onSubmit={onHitung}
               className="space-y-2.5 rounded-[4px] bg-bg-base px-2.5 py-2.5"
             >
-              <FormRow label="Periode Histori (hari)">
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={periodeHistori}
-                  onChange={(e) => onPeriodeHistoriChange?.(e.target.value)}
-                  disabled={running}
-                  className="w-full rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow disabled:opacity-60"
-                />
+              <FormRow label="Periode History">
+                <div className="flex items-center gap-1">
+                  <DateField
+                    value={historiDari}
+                    onChange={onHistoriDariChange}
+                    disabled={running}
+                  />
+                  <span className="shrink-0 text-[12px] text-text-muted">
+                    sd
+                  </span>
+                  <DateField
+                    value={historiSampai}
+                    onChange={onHistoriSampaiChange}
+                    disabled={running}
+                  />
+                </div>
               </FormRow>
-              <FormRow label="Periode Proyeksi (hari)">
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={periodeForecast}
-                  onChange={(e) => onPeriodeForecastChange?.(e.target.value)}
-                  disabled={running}
-                  className="w-full rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow disabled:opacity-60"
-                />
+              <FormRow label="Periode Proyeksi">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={periodeForecast}
+                    onChange={(e) => onPeriodeForecastChange?.(e.target.value)}
+                    disabled={running}
+                    className="w-16 shrink-0 rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-1.5 text-center text-[13px] text-text-primary outline-none focus:border-accent-yellow disabled:opacity-60"
+                  />
+                  <span className="text-[13px] text-text-muted">
+                    hari kedepan
+                  </span>
+                </div>
               </FormRow>
               <div className="flex gap-1.5">
                 {KATEGORI_OPTIONS.map((opt) => {

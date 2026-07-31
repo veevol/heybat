@@ -16,6 +16,10 @@ const BADGE = {
     label: 'No Match',
     className: 'bg-border-subtle text-text-muted font-semibold',
   },
+  ditolak: {
+    label: 'Ditolak',
+    className: 'bg-state-error/90 text-white font-semibold',
+  },
 };
 
 export default function MatchingActionCard({
@@ -43,8 +47,9 @@ export default function MatchingActionCard({
   const isPending = kind === 'pending';
   const isUnmatched = kind === 'unmatched';
   const isRejected = kind === 'rejected';
-  /** Layout padat sama Menunggu / Belum Match / No Match */
-  const useAwaitLayout = isPending || isUnmatched || isRejected;
+  const isDitolak = kind === 'ditolak';
+  /** Layout padat sama Menunggu / Belum Match / No Match / Ditolak */
+  const useAwaitLayout = isPending || isUnmatched || isRejected || isDitolak;
   const diusulkan =
     typeof card.diusulkan_oleh === 'string' ? card.diusulkan_oleh.trim() : '';
   const dipilih =
@@ -61,7 +66,7 @@ export default function MatchingActionCard({
           {badge.label}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
-          {(isPending || isRejected) && pengajuLabel ? (
+          {(isPending || isRejected || isDitolak) && pengajuLabel ? (
             <span className="max-w-[7.5rem] truncate text-[11px] font-normal leading-none text-text-muted">
               Oleh: {pengajuLabel}
             </span>
@@ -176,7 +181,7 @@ export default function MatchingActionCard({
             </div>
           ) : null}
 
-          {isUnmatched || isRejected ? (
+          {isUnmatched || isRejected || isDitolak ? (
             <div className="flex w-full flex-wrap items-center justify-between gap-1.5">
               {canTambahObat && canUsulkan ? (
                 <button

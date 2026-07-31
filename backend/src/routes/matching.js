@@ -668,7 +668,7 @@ router.get(
 /**
  * GET /api/matching/board
  * Query: pbf_id|supplier_id, status, q|search, page|offset, limit, tanggal_upload, oleh
- * status: all | match | menunggu | belum | belum_diajukan | no_match | no_data
+ * status: all | match | menunggu | belum | belum_diajukan | no_match | no_data | ditolak
  * oleh: filter nick dipilih_oleh / diusulkan_oleh (case-insensitive)
  * Filter/search/paginate di Postgres (RPC); Node hanya hydrate kartu halaman ini.
  */
@@ -686,7 +686,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
     } else if (statusFilter === 'no_data' || statusFilter === 'nodata') {
       statusFilter = 'no_match';
     }
-    const allowed = new Set(['all', 'match', 'menunggu', 'belum', 'no_match']);
+    const allowed = new Set(['all', 'match', 'menunggu', 'belum', 'no_match', 'ditolak']);
     if (!allowed.has(statusFilter)) {
       return res.status(400).json({ error: 'status filter tidak valid' });
     }
@@ -738,6 +738,7 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
       menunggu: 0,
       belum: 0,
       no_match: 0,
+      ditolak: 0,
     };
     const pagePayload = pageRes.data || {};
     const totalCount = Number(pagePayload.total_count) || 0;
@@ -936,11 +937,11 @@ router.get('/board', requireMenuAksi('matching', 'lihat'), async (req, res) => {
           kode_obat_yelo: it.kode_obat_yelo || m?.kode_obat_yelo || null,
           kandidat: await kandidatFor(pl),
         });
-      } else if (it.kind === 'rejected') {
+      } else if (it.kind === 'rejected' || it.kind === 'ditolak') {
         const m = matchingById.get(it.matching_id) || null;
         cards.push({
-          kind: 'rejected',
-          board_key: `rejected:${kodePbf}`,
+          kind: it.kind,
+          board_key: `${it.kind}:${kodePbf}`,
           status: 'ditolak',
           matching_id: it.matching_id || null,
           dipilih_oleh: it.dipilih_oleh || m?.dipilih_oleh || null,

@@ -40,6 +40,63 @@ function expandKategoriUntukQuery(kategoriDipilih) {
   return [...set];
 }
 
+/** YYYY-MM-DD validasi sederhana. */
+function parseYmd(value) {
+  const s = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== m - 1 ||
+    dt.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return s;
+}
+
+/** Jumlah hari inklusif antara dua YYYY-MM-DD. */
+function inclusiveDayCount(dariYmd, sampaiYmd) {
+  const [y1, m1, d1] = dariYmd.split('-').map(Number);
+  const [y2, m2, d2] = sampaiYmd.split('-').map(Number);
+  const a = Date.UTC(y1, m1 - 1, d1);
+  const b = Date.UTC(y2, m2 - 1, d2);
+  return Math.floor((b - a) / 86400000) + 1;
+}
+
+function addDaysYmd(ymd, days) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/** Format Date → YYYY-MM-DD di zona Asia/Jakarta. */
+function formatYmdJakarta(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+async function fetchTanggalPenjualanTerakhirYmd() {
+  const { data, error } = await supabase
+    .from('penjualan_obat')
+    .select('tanggal_transaksi')
+    .order('tanggal_transaksi', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.tanggal_transaksi) return null;
+  return formatYmdJakarta(new Date(data.tanggal_transaksi));
+}
+
 function actorLabel(req) {
   const u = req.user || {};
   return u.nama || u.email || u.id || 'staf';
@@ -471,7 +528,16 @@ router.get(
   async (_req, res) => {
     try {
       const row = await getOrCreatePengaturan();
-      res.json(row);
+      let tanggalPenjualanTerakhir = null;
+      try {
+        tanggalPenjualanTerakhir = await fetchTanggalPenjualanTerakhirYmd();
+      } catch (err) {
+        console.error('[forecast/pengaturan] tanggal penjualan terakhir', err);
+      }
+      res.json({
+        ...row,
+        tanggal_penjualan_terakhir: tanggalPenjualanTerakhir,
+      });
     } catch (err) {
       console.error('[forecast/pengaturan GET]', err);
       res.status(500).json({ error: err.message || 'Gagal memuat pengaturan' });
@@ -511,7 +577,13 @@ router.put('/pengaturan', requireOwner, async (req, res) => {
 
 /**
  * POST /api/forecast/jalankan
- * Body: { periode_forecast_hari, kategori_penjualan: string[], periode_histori_hari?: number }
+ * Body: {
+ *   periode_forecast_hari,
+ *   kategori_penjualan: string[],
+ *   histori_dari?: 'YYYY-MM-DD',
+ *   histori_sampai?: 'YYYY-MM-DD',
+ *   periode_histori_hari?: number  // legacy fallback
+ * }
  */
 router.post(
   '/jalankan',
@@ -548,22 +620,47 @@ router.post(
       const kategoriQuery = expandKategoriUntukQuery(kategori);
 
       const pengaturan = await getOrCreatePengaturan();
-      let periodeHistori = Number(pengaturan.periode_histori_hari) || 90;
-      if (req.body?.periode_histori_hari != null && req.body?.periode_histori_hari !== '') {
-        const nHist = Number(req.body.periode_histori_hari);
-        if (!Number.isFinite(nHist) || nHist <= 0 || !Number.isInteger(nHist)) {
-          return res
-            .status(400)
-            .json({ error: 'periode_histori_hari harus bilangan bulat > 0' });
+      let historiDari = parseYmd(req.body?.histori_dari);
+      let historiSampai = parseYmd(req.body?.histori_sampai);
+
+      if (!historiDari || !historiSampai) {
+        let periodeHistoriLegacy = Number(pengaturan.periode_histori_hari) || 90;
+        if (
+          req.body?.periode_histori_hari != null &&
+          req.body?.periode_histori_hari !== ''
+        ) {
+          const nHist = Number(req.body.periode_histori_hari);
+          if (
+            !Number.isFinite(nHist) ||
+            nHist <= 0 ||
+            !Number.isInteger(nHist)
+          ) {
+            return res.status(400).json({
+              error: 'periode_histori_hari harus bilangan bulat > 0',
+            });
+          }
+          periodeHistoriLegacy = nHist;
         }
-        periodeHistori = nHist;
+        historiSampai =
+          (await fetchTanggalPenjualanTerakhirYmd()) || formatYmdJakarta();
+        historiDari = addDaysYmd(historiSampai, -(periodeHistoriLegacy - 1));
       }
 
-      const since = new Date();
-      since.setDate(since.getDate() - periodeHistori);
-      const sinceIso = since.toISOString();
+      if (historiDari > historiSampai) {
+        return res.status(400).json({
+          error: 'histori_dari tidak boleh setelah histori_sampai',
+        });
+      }
 
-      // Parallel: obat list + penjualan aggregate + stok ringkasan
+      const periodeHistori = inclusiveDayCount(historiDari, historiSampai);
+      if (periodeHistori <= 0) {
+        return res.status(400).json({ error: 'Rentang histori tidak valid' });
+      }
+
+      const sinceIso = `${historiDari}T00:00:00+07:00`;
+      const untilExclusive = addDaysYmd(historiSampai, 1);
+      const untilIso = `${untilExclusive}T00:00:00+07:00`;
+
       const [obatRows, penjualanRows, stokMap] = await Promise.all([
         fetchAllRows(() =>
           supabase
@@ -578,6 +675,7 @@ router.post(
             .select('kode_obat, jumlah')
             .in('kategori_pelanggan', kategoriQuery)
             .gte('tanggal_transaksi', sinceIso)
+            .lt('tanggal_transaksi', untilIso)
         ),
         loadLatestStokRingkasanMap(),
       ]);
@@ -596,10 +694,12 @@ router.post(
           periode_forecast_hari: periodeForecast,
           kategori_penjualan: kategori,
           periode_histori_hari: periodeHistori,
+          histori_dari: historiDari,
+          histori_sampai: historiSampai,
           dijalankan_oleh: actorLabel(req),
         })
         .select(
-          'id, periode_forecast_hari, kategori_penjualan, periode_histori_hari, dijalankan_oleh, dijalankan_saat'
+          'id, periode_forecast_hari, kategori_penjualan, periode_histori_hari, histori_dari, histori_sampai, dijalankan_oleh, dijalankan_saat'
         )
         .single();
       if (runErr) throw runErr;
@@ -658,6 +758,8 @@ router.post(
           perlu_beli: perluBeli,
           periode_forecast_hari: periodeForecast,
           periode_histori_hari: periodeHistori,
+          histori_dari: historiDari,
+          histori_sampai: historiSampai,
           kategori_penjualan: kategori,
         },
       });
@@ -677,7 +779,7 @@ router.get(
       const { data, error } = await supabase
         .from('forecast_run')
         .select(
-          'id, periode_forecast_hari, kategori_penjualan, periode_histori_hari, dijalankan_oleh, dijalankan_saat'
+          'id, periode_forecast_hari, kategori_penjualan, periode_histori_hari, histori_dari, histori_sampai, dijalankan_oleh, dijalankan_saat'
         )
         .order('dijalankan_saat', { ascending: false });
       if (error) throw error;
@@ -706,7 +808,7 @@ router.get(
       const { data: run, error: runErr } = await supabase
         .from('forecast_run')
         .select(
-          'id, periode_forecast_hari, kategori_penjualan, periode_histori_hari, dijalankan_oleh, dijalankan_saat'
+          'id, periode_forecast_hari, kategori_penjualan, periode_histori_hari, histori_dari, histori_sampai, dijalankan_oleh, dijalankan_saat'
         )
         .eq('id', runId)
         .maybeSingle();

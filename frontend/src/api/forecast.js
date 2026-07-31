@@ -15,15 +15,23 @@ export async function updateForecastPengaturan(periodeHistoriHari) {
 export async function jalankanForecast({
   periode_forecast_hari,
   kategori_penjualan,
+  histori_dari,
+  histori_sampai,
   periode_histori_hari,
 }) {
+  const body = {
+    periode_forecast_hari,
+    kategori_penjualan,
+  };
+  if (histori_dari && histori_sampai) {
+    body.histori_dari = histori_dari;
+    body.histori_sampai = histori_sampai;
+  } else if (periode_histori_hari != null) {
+    body.periode_histori_hari = periode_histori_hari;
+  }
   return apiJson(apiUrl('/api/forecast/jalankan'), {
     method: 'POST',
-    body: JSON.stringify({
-      periode_forecast_hari,
-      kategori_penjualan,
-      periode_histori_hari,
-    }),
+    body: JSON.stringify(body),
   });
 }
 
