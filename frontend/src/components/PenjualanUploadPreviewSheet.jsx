@@ -22,10 +22,13 @@ function formatTanggal(iso) {
   }).format(d);
 }
 
+/**
+ * Preview session upload penjualan — CTA selaras UploadPreviewSheet pricelist.
+ */
 export default function PenjualanUploadPreviewSheet({
   preview,
   onConfirm,
-  onCancel,
+  onRetry,
   submitting = false,
 }) {
   if (!preview) return null;
@@ -38,25 +41,26 @@ export default function PenjualanUploadPreviewSheet({
     (warnings.total || 0) > 0;
   const perluCek = preview.perlu_cek_sample || [];
   const jumlahBaru = preview.jumlah_baru ?? 0;
+  const sample = preview.sample || [];
 
   return (
     <SheetModal
       title={
         <h2 className="text-[15px] font-semibold leading-none text-text-primary">
-          Preview Upload Penjualan
+          Preview Hasil Upload
         </h2>
       }
-      onClose={onCancel}
+      onClose={onRetry}
       busy={submitting}
       footer={
         <div className="flex flex-col-reverse gap-1.5 sm:flex-row sm:justify-end">
           <button
             type="button"
-            onClick={onCancel}
+            onClick={onRetry}
             disabled={submitting}
             className="w-full rounded-[4px] border border-border-subtle px-3 py-2 text-[13px] text-text-primary disabled:opacity-50 sm:w-auto"
           >
-            Batal
+            File Salah, Ulangi
           </button>
           <button
             type="button"
@@ -64,49 +68,18 @@ export default function PenjualanUploadPreviewSheet({
             disabled={submitting || jumlahBaru < 1}
             className="inline-flex w-full items-center justify-center rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white disabled:opacity-50 sm:w-auto"
           >
-            {submitting ? <SubmitSpinner /> : `Simpan ${jumlahBaru} baris baru`}
+            {submitting ? <SubmitSpinner /> : 'Lanjutkan, Simpan Data'}
           </button>
         </div>
       }
     >
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-secondary">
-          <span>
-            Terbaca:{' '}
-            <strong className="text-text-primary">{preview.total_baris ?? 0}</strong>
-          </span>
-          <span>
-            Baru:{' '}
-            <strong className="text-text-primary">{jumlahBaru}</strong>
-          </span>
-          <span>
-            Duplikat (skip):{' '}
-            <strong className="text-text-primary">
-              {preview.jumlah_sudah_ada ?? 0}
-            </strong>
-          </span>
-          <span>
-            Perlu cek:{' '}
-            <strong className="text-state-warning">
-              {preview.jumlah_perlu_cek ?? 0}
-            </strong>
-          </span>
-          {preview.repaired ? (
-            <span className="text-text-muted">
-              Styles diperbaiki otomatis
-              {preview.style_replacements
-                ? ` (${preview.style_replacements})`
-                : ''}
-            </span>
-          ) : null}
-        </div>
-
+      <div className="space-y-2">
         {hasParseWarnings ? (
           <div
             className="rounded-[4px] border border-state-warning/40 bg-state-warning/15 px-2.5 py-2 text-[12px] leading-snug text-state-warning"
             role="alert"
           >
-            <p className="font-semibold">Ada baris gagal dibaca</p>
+            <p className="font-semibold">Ada peringatan pada hasil parse</p>
             <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px]">
               {(warnings.gagal_tanggal || 0) > 0 ? (
                 <li>{warnings.gagal_tanggal} baris tanggal gagal diparse</li>
@@ -123,6 +96,38 @@ export default function PenjualanUploadPreviewSheet({
           </div>
         ) : null}
 
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-secondary">
+          <span>
+            Total baris terdeteksi:{' '}
+            <strong className="text-text-primary">
+              {preview.total_baris ?? 0}
+            </strong>
+          </span>
+          <span>
+            Baris baru:{' '}
+            <strong className="text-text-primary">{jumlahBaru}</strong>
+          </span>
+          <span>
+            Duplikat (skip):{' '}
+            <strong className="text-text-primary">
+              {preview.jumlah_sudah_ada ?? 0}
+            </strong>
+          </span>
+          {(preview.jumlah_perlu_cek || 0) > 0 ? (
+            <span className="text-state-warning">
+              Perlu cek: {preview.jumlah_perlu_cek}
+            </span>
+          ) : null}
+          {preview.repaired ? (
+            <span className="text-text-muted">
+              Styles diperbaiki
+              {preview.style_replacements
+                ? ` (${preview.style_replacements})`
+                : ''}
+            </span>
+          ) : null}
+        </div>
+
         {(preview.jumlah_perlu_cek || 0) > 0 ? (
           <div
             className="rounded-[4px] border border-state-warning/40 bg-state-warning/10 px-2.5 py-2 text-[12px] leading-snug text-text-primary"
@@ -132,14 +137,16 @@ export default function PenjualanUploadPreviewSheet({
               {preview.jumlah_perlu_cek} baris kategori “perlu cek”
             </p>
             <p className="mt-0.5 text-[11px] text-text-secondary">
-              Hanya salah satu syarat mitra/titip terpenuhi (nama dokter “Mitra”/“Titip”
-              vs Harga Jual 3). Bisa ditandai manual setelah simpan.
+              Hanya salah satu syarat mitra/titip terpenuhi. Bisa ditandai manual
+              setelah simpan.
             </p>
             {perluCek.length > 0 ? (
               <ul className="mt-1.5 max-h-28 space-y-1 overflow-y-auto text-[11px] text-text-secondary">
                 {perluCek.map((row) => (
                   <li key={`${row.no_faktur}-${row.kode_obat}-${row.baris}`}>
-                    <span className="text-text-primary">{row.nama_obat || row.kode_obat}</span>
+                    <span className="text-text-primary">
+                      {row.nama_obat || row.kode_obat}
+                    </span>
                     {' · '}
                     dokter: {row.nama_dokter || '—'} · {row.harga_jual_label || '—'}
                   </li>
@@ -149,31 +156,45 @@ export default function PenjualanUploadPreviewSheet({
           </div>
         ) : null}
 
-        <div>
-          <p className="mb-1 text-[11px] font-medium text-text-secondary">
-            Sampel baris pertama
-          </p>
-          <div className="overflow-x-auto rounded-[4px] border border-border-subtle">
-            <table className="min-w-full text-left text-[11px]">
-              <thead className="bg-bg-base text-text-muted">
+        <div className="overflow-hidden rounded-[4px] border border-border-subtle">
+          <table className="w-full text-left text-[11px]">
+            <thead className="bg-bg-base text-text-secondary">
+              <tr>
+                <th className="px-2 py-1.5 font-medium">Faktur</th>
+                <th className="px-2 py-1.5 font-medium">Obat</th>
+                <th className="px-2 py-1.5 font-medium">Tgl</th>
+                <th className="px-2 py-1.5 font-medium">Harga</th>
+                <th className="px-2 py-1.5 font-medium">Kat.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sample.length === 0 ? (
                 <tr>
-                  <th className="px-2 py-1.5 font-medium">Faktur</th>
-                  <th className="px-2 py-1.5 font-medium">Obat</th>
-                  <th className="px-2 py-1.5 font-medium">Tgl</th>
-                  <th className="px-2 py-1.5 font-medium">Harga</th>
-                  <th className="px-2 py-1.5 font-medium">Kat.</th>
+                  <td
+                    colSpan={5}
+                    className="px-2 py-4 text-center text-text-muted"
+                  >
+                    Tidak ada baris untuk ditampilkan
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {(preview.sample || []).map((row, idx) => (
+              ) : (
+                sample.map((row, idx) => (
                   <tr
                     key={`${row.no_faktur}-${row.kode_obat}-${idx}`}
-                    className="border-t border-border-subtle"
+                    className="border-t border-border-subtle/60 align-top"
                   >
-                    <td className="px-2 py-1.5 text-text-secondary">{row.no_faktur}</td>
+                    <td className="px-2 py-1.5 text-text-secondary">
+                      {row.no_faktur || '—'}
+                    </td>
                     <td className="px-2 py-1.5 text-text-primary">
-                      <div className="max-w-[140px] truncate">{row.nama_obat || row.kode_obat}</div>
-                      <div className="text-text-muted">{row.kode_obat}</div>
+                      <div className="font-medium leading-snug">
+                        {row.nama_obat || row.kode_obat || '—'}
+                      </div>
+                      {row.kode_obat ? (
+                        <div className="text-[10px] text-text-muted">
+                          {row.kode_obat}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="whitespace-nowrap px-2 py-1.5 text-text-secondary">
                       {formatTanggal(row.tanggal_transaksi)}
@@ -192,15 +213,21 @@ export default function PenjualanUploadPreviewSheet({
                               : 'text-text-muted'
                         }
                       >
-                        {row.kategori_pelanggan}
+                        {row.kategori_pelanggan || '—'}
                       </span>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
+
+        {sample.length > 0 && jumlahBaru > sample.length ? (
+          <p className="text-[10px] text-text-muted">
+            Menampilkan {sample.length} sampel dari {jumlahBaru} baris baru.
+          </p>
+        ) : null}
 
         {jumlahBaru < 1 ? (
           <p className="text-[12px] text-text-secondary">

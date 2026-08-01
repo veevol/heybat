@@ -157,7 +157,7 @@ router.get('/ringkasan', requireMenuAksi('penjualan', 'lihat'), async (req, res)
     const rows = await fetchAllRows(() =>
       supabase
         .from('penjualan_obat')
-        .select('tanggal_transaksi, subtotal, kategori_pelanggan')
+        .select('tanggal_transaksi, subtotal, kategori_pelanggan, no_faktur')
         .order('tanggal_transaksi', { ascending: false })
     );
 
@@ -180,18 +180,50 @@ router.get('/ringkasan', requireMenuAksi('penjualan', 'lihat'), async (req, res)
           retail: 0,
           mitra: 0,
           titip: 0,
+          retail_nominal: 0,
+          mitra_nominal: 0,
+          titip_nominal: 0,
+          _faktur: {
+            retail: new Set(),
+            mitra: new Set(),
+            titip: new Set(),
+          },
         };
         byMonth.set(key, agg);
       }
+      const sub = Number(row.subtotal) || 0;
+      const faktur = normalizeText(row.no_faktur);
       agg.jumlah_transaksi += 1;
-      agg.total_nominal += Number(row.subtotal) || 0;
-      if (row.kategori_pelanggan === 'perlu_cek') agg.perlu_cek += 1;
-      else if (row.kategori_pelanggan === 'mitra') agg.mitra += 1;
-      else if (row.kategori_pelanggan === 'titip') agg.titip += 1;
-      else agg.retail += 1;
+      agg.total_nominal += sub;
+      if (row.kategori_pelanggan === 'perlu_cek') {
+        agg.perlu_cek += 1;
+      } else if (row.kategori_pelanggan === 'mitra') {
+        agg.mitra += 1;
+        agg.mitra_nominal += sub;
+        if (faktur) agg._faktur.mitra.add(faktur);
+      } else if (row.kategori_pelanggan === 'titip') {
+        agg.titip += 1;
+        agg.titip_nominal += sub;
+        if (faktur) agg._faktur.titip.add(faktur);
+      } else {
+        // retail + fallback tanpa kategori
+        agg.retail += 1;
+        agg.retail_nominal += sub;
+        if (faktur) agg._faktur.retail.add(faktur);
+      }
     }
 
-    const ringkasan = [...byMonth.values()].sort((a, b) => (a.bulan < b.bulan ? 1 : -1));
+    const ringkasan = [...byMonth.values()]
+      .map((agg) => {
+        const { _faktur, ...rest } = agg;
+        return {
+          ...rest,
+          retail_faktur: _faktur.retail.size,
+          mitra_faktur: _faktur.mitra.size,
+          titip_faktur: _faktur.titip.size,
+        };
+      })
+      .sort((a, b) => (a.bulan < b.bulan ? 1 : -1));
 
     return res.json({
       ringkasan,
