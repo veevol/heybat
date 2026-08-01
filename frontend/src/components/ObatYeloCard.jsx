@@ -49,18 +49,20 @@ export default function ObatYeloCard({ obat, suppliers = [], onOpen }) {
           </div>
         </div>
 
-        {/* Section 2 — stok/harga, substitusi, supplier (tinggi baris tetap) */}
+        {/* Section 2 — stok | harga, substitusi | supplier */}
         <div className="space-y-1.5 bg-[#2e2d34] px-2.5 py-1.5 transition group-hover:bg-[#35343c]">
-          <div className="flex min-h-[18px] min-w-0 items-center">
+          <div className="flex min-h-[18px] min-w-0 items-center justify-between gap-2">
             {stokHarga ? (
-              <span className="min-w-0 flex-1 truncate text-[11px] leading-snug text-text-secondary">
-                <span className="font-bold text-text-primary">
+              <>
+                <span className="min-w-0 flex-1 truncate text-[11px] font-bold leading-snug text-text-primary">
                   {stokHarga.stok}
                 </span>
                 {stokHarga.harga ? (
-                  <span className="font-normal"> {stokHarga.harga}</span>
+                  <span className="max-w-[58%] shrink-0 truncate text-right text-[11px] font-semibold leading-snug text-accent-yellow">
+                    {stokHarga.harga}
+                  </span>
                 ) : null}
-              </span>
+              </>
             ) : (
               <span className="min-w-0 flex-1">{'\u00a0'}</span>
             )}

@@ -38,6 +38,7 @@ import FilterSortSearchSheet, {
 } from '../components/FilterSortSearchSheet';
 import ObatYeloDetailSheet from '../components/ObatYeloDetailSheet';
 import ObatYeloFormModal from '../components/ObatYeloFormModal';
+import StickySearchBar from '../components/StickySearchBar';
 import PricelistPickSheet from '../components/PricelistPickSheet';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
@@ -211,7 +212,6 @@ export default function ForecastingPage() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState(EMPTY_SORT);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [draftSearch, setDraftSearch] = useState('');
   const [draftSort, setDraftSort] = useState(EMPTY_SORT);
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
 
@@ -503,7 +503,6 @@ export default function ForecastingPage() {
   };
 
   function openFilterSheet() {
-    setDraftSearch(search);
     setDraftSort(sort);
     setDraftFilters({
       stok: normalizeFilterSection(filters.stok),
@@ -514,7 +513,6 @@ export default function ForecastingPage() {
   }
 
   function handleFilterApply() {
-    setSearch(draftSearch);
     setSort(draftSort);
     setFilters({
       stok: normalizeFilterSection(draftFilters.stok),
@@ -525,7 +523,6 @@ export default function ForecastingPage() {
   }
 
   function handleFilterReset() {
-    setDraftSearch('');
     setDraftSort(EMPTY_SORT);
     setDraftFilters({
       stok: emptyFilterSection([STOK_KURANG]),
@@ -641,6 +638,7 @@ export default function ForecastingPage() {
       nama: s.nama,
       inisial: s.inisial,
       pricelist_kode_pbf: s.pricelist_kode_pbf || null,
+      pricelist_nama_barang: s.pricelist_nama_barang || null,
       matching_id: s.matching_id || null,
     }));
     setEditSuppliers(current);
@@ -705,6 +703,7 @@ export default function ForecastingPage() {
         nama: pendingSupplier.nama,
         inisial: pendingSupplier.inisial,
         pricelist_kode_pbf: row.kode_pbf,
+        pricelist_nama_barang: row.nama_barang || null,
         matching_id: null,
         _isNew: true,
       },
@@ -997,13 +996,20 @@ export default function ForecastingPage() {
       }
     >
       {runIdParam ? (
-        <DefektaFilterPills
-          activeKey={defektaPill}
-          totalBelumDipilih={defektaFilter?.total_belum_dipilih ?? 0}
-          pbfTerpilih={defektaFilter?.pbf_terpilih || []}
-          onChange={setDefektaPill}
-          disabled={hasilLoading || setujuiSemuaBusy}
-        />
+        <StickySearchBar
+          value={search}
+          onChange={setSearch}
+          placeholder="Cari grup, nama, atau kode obat..."
+        >
+          <DefektaFilterPills
+            activeKey={defektaPill}
+            totalBelumDipilih={defektaFilter?.total_belum_dipilih ?? 0}
+            pbfTerpilih={defektaFilter?.pbf_terpilih || []}
+            onChange={setDefektaPill}
+            disabled={hasilLoading || setujuiSemuaBusy}
+            embedded
+          />
+        </StickySearchBar>
       ) : null}
 
       <div className="space-y-2">
@@ -1116,9 +1122,7 @@ export default function ForecastingPage() {
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         title="Filter Hasil Forecast"
-        searchValue={draftSearch}
-        onSearchChange={setDraftSearch}
-        searchPlaceholder="Cari grup, nama, atau kode obat..."
+        showSearch={false}
         sortOptions={[
           { key: 'nama', label: 'Nama Grup' },
           { key: 'kebutuhan', label: 'Total Kebutuhan' },

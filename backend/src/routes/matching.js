@@ -1140,34 +1140,65 @@ router.get('/unmatched', requireMenuAksi('matching', 'lihat'), async (req, res) 
 });
 
 // GET /api/matching/supplier-map-aktif
-// Map kode_obat_yelo -> [{ id, nama, inisial }] dari matching aktif.
+// Map kode_obat_yelo -> [{ id, nama, inisial, pricelist_kode_pbf, pricelist_nama_barang, matching_id }]
 router.get('/supplier-map-aktif', requireMenuAksi('matching', 'lihat'), async (_req, res) => {
   try {
     const rows = await fetchAllRows(() =>
       supabase
         .from('matching')
         .select(
-          'id, kode_obat_yelo, pricelist_kode_pbf, status, supplier:supplier ( id, nama, inisial )'
+          'id, kode_obat_yelo, pricelist_pbf_id, pricelist_kode_pbf, status, supplier:supplier ( id, nama, inisial )'
         )
         .in('status', HIDDEN_FROM_KANDIDAT)
         .not('kode_obat_yelo', 'is', null)
     );
 
-    /** @type {Record<string, Array<{ id: string, nama: string | null, inisial: string | null, pricelist_kode_pbf: string | null, matching_id: string }>>} */
+    const byPbf = new Map();
+    for (const row of rows) {
+      if (!row.pricelist_pbf_id || !row.pricelist_kode_pbf) continue;
+      if (!byPbf.has(row.pricelist_pbf_id)) {
+        byPbf.set(row.pricelist_pbf_id, new Set());
+      }
+      byPbf.get(row.pricelist_pbf_id).add(row.pricelist_kode_pbf);
+    }
+
+    const plMap = new Map();
+    await Promise.all(
+      [...byPbf.entries()].map(async ([pbfId, kodeSet]) => {
+        const plRows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select('kode_pbf, nama_barang, tanggal_upload, id')
+            .eq('pbf_id', pbfId)
+            .order('tanggal_upload', { ascending: false })
+            .order('id', { ascending: false })
+        );
+        const seen = new Set();
+        for (const pl of plRows) {
+          if (!kodeSet.has(pl.kode_pbf) || seen.has(pl.kode_pbf)) continue;
+          seen.add(pl.kode_pbf);
+          plMap.set(`${pbfId}::${pl.kode_pbf}`, pl);
+        }
+      })
+    );
+
+    /** @type {Record<string, Array<{ id: string, nama: string | null, inisial: string | null, pricelist_kode_pbf: string | null, pricelist_nama_barang: string | null, matching_id: string }>>} */
     const map = {};
     for (const row of rows) {
       const kode = row.kode_obat_yelo;
       const supplier = row.supplier;
       if (!kode || !supplier?.id) continue;
       if (!map[kode]) map[kode] = [];
-      // Satu pill per supplier; simpan kode_pbf pertama yang aktif
+      // Satu pill per supplier; simpan matching aktif pertama
       const existing = map[kode].find((s) => s.id === supplier.id);
       if (existing) continue;
+      const pl = plMap.get(`${row.pricelist_pbf_id}::${row.pricelist_kode_pbf}`);
       map[kode].push({
         id: supplier.id,
         nama: supplier.nama || null,
         inisial: supplier.inisial || null,
         pricelist_kode_pbf: row.pricelist_kode_pbf || null,
+        pricelist_nama_barang: pl?.nama_barang || null,
         matching_id: row.id,
       });
     }
@@ -1343,15 +1374,46 @@ router.put(
 
     if (afterErr) throw afterErr;
 
+    const byPbf = new Map();
+    for (const row of activeAfter || []) {
+      if (!row.pricelist_pbf_id || !row.pricelist_kode_pbf) continue;
+      if (!byPbf.has(row.pricelist_pbf_id)) {
+        byPbf.set(row.pricelist_pbf_id, new Set());
+      }
+      byPbf.get(row.pricelist_pbf_id).add(row.pricelist_kode_pbf);
+    }
+
+    const plMap = new Map();
+    await Promise.all(
+      [...byPbf.entries()].map(async ([pbfId, kodeSet]) => {
+        const plRows = await fetchAllRows(() =>
+          supabase
+            .from('pricelist')
+            .select('kode_pbf, nama_barang, tanggal_upload, id')
+            .eq('pbf_id', pbfId)
+            .order('tanggal_upload', { ascending: false })
+            .order('id', { ascending: false })
+        );
+        const seen = new Set();
+        for (const pl of plRows) {
+          if (!kodeSet.has(pl.kode_pbf) || seen.has(pl.kode_pbf)) continue;
+          seen.add(pl.kode_pbf);
+          plMap.set(`${pbfId}::${pl.kode_pbf}`, pl);
+        }
+      })
+    );
+
     const suppliers = [];
     for (const row of activeAfter || []) {
       if (!row.supplier?.id) continue;
       if (suppliers.some((s) => s.id === row.supplier.id)) continue;
+      const pl = plMap.get(`${row.pricelist_pbf_id}::${row.pricelist_kode_pbf}`);
       suppliers.push({
         id: row.supplier.id,
         nama: row.supplier.nama || null,
         inisial: row.supplier.inisial || null,
         pricelist_kode_pbf: row.pricelist_kode_pbf || null,
+        pricelist_nama_barang: pl?.nama_barang || null,
         matching_id: row.id,
       });
     }

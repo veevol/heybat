@@ -24,6 +24,7 @@ import ObatYeloDetailSheet from '../components/ObatYeloDetailSheet';
 import ObatYeloFormModal from '../components/ObatYeloFormModal';
 import ObatYeloSkeleton from '../components/ObatYeloSkeleton';
 import PricelistPickSheet from '../components/PricelistPickSheet';
+import StickySearchBar from '../components/StickySearchBar';
 import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingModal';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
@@ -157,7 +158,6 @@ export default function DataObatYeloPage() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState(EMPTY_SORT);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [draftSearch, setDraftSearch] = useState('');
   const [draftSort, setDraftSort] = useState(EMPTY_SORT);
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
 
@@ -402,7 +402,6 @@ export default function DataObatYeloPage() {
   );
 
   const openSheet = () => {
-    setDraftSearch(search);
     setDraftSort(sort);
     setDraftFilters({
       stok: normalizeFilterSection(filters.stok),
@@ -417,7 +416,6 @@ export default function DataObatYeloPage() {
   };
 
   const handleApply = () => {
-    setSearch(draftSearch);
     setSort(draftSort);
     setFilters({
       stok: normalizeFilterSection(draftFilters.stok),
@@ -433,7 +431,6 @@ export default function DataObatYeloPage() {
   };
 
   const handleReset = () => {
-    setDraftSearch('');
     setDraftSort(EMPTY_SORT);
     setDraftFilters({
       stok: emptyFilterSection(['Ready']),
@@ -459,6 +456,7 @@ export default function DataObatYeloPage() {
       nama: s.nama,
       inisial: s.inisial,
       pricelist_kode_pbf: s.pricelist_kode_pbf || null,
+      pricelist_nama_barang: s.pricelist_nama_barang || null,
       matching_id: s.matching_id || null,
     }));
     setEditSuppliers(current);
@@ -523,6 +521,7 @@ export default function DataObatYeloPage() {
         nama: pendingSupplier.nama,
         inisial: pendingSupplier.inisial,
         pricelist_kode_pbf: row.kode_pbf,
+        pricelist_nama_barang: row.nama_barang || null,
         matching_id: null,
         _isNew: true,
       },
@@ -739,6 +738,15 @@ export default function DataObatYeloPage() {
       pageAction={canTambah ? { onClick: openQuickCreate } : null}
       navLoading={loading || submitting || deleteSubmitting || quickSubmitting}
     >
+      <StickySearchBar
+        value={search}
+        onChange={(value) => {
+          setSearch(value);
+          setVisibleCount(PAGE_CHUNK);
+        }}
+        placeholder="Cari nama, kandungan, substitusi, kode obat..."
+      />
+
       {!loading && !loadError && items.length > 0 ? (
         <p className="mb-1.5 text-[11px] text-text-muted">
           Menampilkan {visibleItems.length} dari {filteredItems.length}
@@ -919,9 +927,7 @@ export default function DataObatYeloPage() {
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         title="Filter Obat Yelo"
-        searchValue={draftSearch}
-        onSearchChange={setDraftSearch}
-        searchPlaceholder="Cari nama, kandungan, substitusi, kode obat..."
+        showSearch={false}
         sortOptions={[
           { key: 'nama', label: 'Nama' },
           { key: 'kode', label: 'Kode Obat' },

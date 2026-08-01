@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
 
@@ -16,8 +17,10 @@ function labelBulan(isoDate) {
   }).format(d);
 }
 
+const CONFIRM_PHRASE = 'RINGKAS DATA LAMA';
+
 /**
- * Konfirmasi destruktif untuk Ringkas Data Lama (preview → konfirmasi).
+ * Konfirmasi destruktif Ringkas Data Lama — wajib ketik ulang frasa konfirmasi.
  */
 export default function StokRingkasConfirmModal({
   preview,
@@ -25,9 +28,17 @@ export default function StokRingkasConfirmModal({
   onClose,
   onConfirm,
 }) {
+  const [typed, setTyped] = useState('');
+
+  useEffect(() => {
+    setTyped('');
+  }, [preview]);
+
   if (!preview) return null;
 
-  const kosong = (preview.baris_detail || 0) < 1 && (preview.pasangan_kode_bulan || 0) < 1;
+  const kosong =
+    (preview.baris_detail || 0) < 1 && (preview.pasangan_kode_bulan || 0) < 1;
+  const matched = typed.trim() === CONFIRM_PHRASE;
 
   return (
     <SheetModal
@@ -51,7 +62,7 @@ export default function StokRingkasConfirmModal({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting || kosong}
+            disabled={submitting || kosong || !matched}
             className="inline-flex w-full items-center justify-center rounded-[4px] bg-state-error px-3 py-2 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
           >
             {submitting ? <SubmitSpinner /> : 'Konfirmasi Ringkas'}
@@ -61,39 +72,63 @@ export default function StokRingkasConfirmModal({
     >
       <div className="space-y-2 text-[13px] leading-snug text-text-secondary">
         <p>
-          Proses ini memadatkan snapshot stok lebih dari 3 bulan ke ringkasan bulanan,
-          lalu <span className="font-semibold text-state-error">menghapus detail aslinya</span>.
-          Tidak bisa dibatalkan.
+          Proses ini memadatkan snapshot stok lebih dari 12 bulan ke ringkasan
+          bulanan, lalu{' '}
+          <span className="font-semibold text-state-error">
+            menghapus detail aslinya
+          </span>
+          . Tidak bisa dibatalkan.
         </p>
         {kosong ? (
           <p className="rounded-[4px] border border-border-subtle bg-bg-base px-2.5 py-2 text-[12px]">
             Tidak ada data lama yang perlu diringkas saat ini.
           </p>
         ) : (
-          <ul className="list-inside list-disc space-y-1 text-[12px]">
-            <li>
-              <strong className="text-text-primary">
-                {formatNumber(preview.pasangan_kode_bulan)}
-              </strong>{' '}
-              kombinasi kode×bulan akan diringkas
-            </li>
-            <li>
-              <strong className="text-text-primary">{formatNumber(preview.kode_obat)}</strong>{' '}
-              kode obat
-            </li>
-            <li>
-              <strong className="text-text-primary">
-                {formatNumber(preview.baris_detail)}
-              </strong>{' '}
-              baris detail akan dihapus
-            </li>
-            <li>
-              Rentang:{' '}
-              <strong className="text-text-primary">
-                {labelBulan(preview.bulan_dari)} — {labelBulan(preview.bulan_sampai)}
-              </strong>
-            </li>
-          </ul>
+          <>
+            <ul className="list-inside list-disc space-y-1 text-[12px]">
+              <li>
+                <strong className="text-text-primary">
+                  {formatNumber(preview.pasangan_kode_bulan)}
+                </strong>{' '}
+                kombinasi kode×bulan akan diringkas
+              </li>
+              <li>
+                <strong className="text-text-primary">
+                  {formatNumber(preview.kode_obat)}
+                </strong>{' '}
+                kode obat
+              </li>
+              <li>
+                <strong className="text-text-primary">
+                  {formatNumber(preview.baris_detail)}
+                </strong>{' '}
+                baris detail akan dihapus
+              </li>
+              <li>
+                Rentang:{' '}
+                <strong className="text-text-primary">
+                  {labelBulan(preview.bulan_dari)} —{' '}
+                  {labelBulan(preview.bulan_sampai)}
+                </strong>
+              </li>
+            </ul>
+            <p className="pt-1 text-[13px] leading-snug text-text-secondary">
+              Ketik{' '}
+              <span className="font-semibold text-text-primary">
+                {CONFIRM_PHRASE}
+              </span>{' '}
+              untuk konfirmasi.
+            </p>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={CONFIRM_PHRASE}
+              disabled={submitting}
+              autoFocus
+              className="w-full rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-state-error focus:ring-1 focus:ring-state-error"
+            />
+          </>
         )}
       </div>
     </SheetModal>

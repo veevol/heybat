@@ -39,9 +39,10 @@ function cloneFilterState(state = {}) {
  *   open: boolean,
  *   onClose: () => void,
  *   title?: string,
- *   searchValue: string,
- *   onSearchChange: (value: string) => void,
+ *   searchValue?: string,
+ *   onSearchChange?: (value: string) => void,
  *   searchPlaceholder?: string,
+ *   showSearch?: boolean,
  *   sortOptions?: Array<{ key: string, label: string }>,
  *   sortState?: { key: string | null, direction: 'asc' | 'desc' },
  *   onSortChange?: (next: { key: string | null, direction: 'asc' | 'desc' }) => void,
@@ -66,6 +67,7 @@ export default function FilterSortSearchSheet({
   searchValue = '',
   onSearchChange,
   searchPlaceholder = 'Cari…',
+  showSearch = true,
   sortOptions = [],
   sortState = { key: null, direction: 'asc' },
   onSortChange,
@@ -168,20 +170,22 @@ export default function FilterSortSearchSheet({
       }
     >
       <div className="space-y-3">
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted"
-            strokeWidth={2}
-          />
-          <input
-            type="search"
-            value={searchValue}
-            onChange={(e) => onSearchChange?.(e.target.value)}
-            placeholder={searchPlaceholder}
-            className="h-9 w-full rounded-[4px] bg-bg-base py-1.5 pl-8 pr-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:ring-1 focus:ring-accent-yellow"
-            aria-label="Cari"
-          />
-        </div>
+        {showSearch ? (
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted"
+              strokeWidth={2}
+            />
+            <input
+              type="search"
+              value={searchValue}
+              onChange={(e) => onSearchChange?.(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="h-9 w-full rounded-[4px] bg-bg-base py-1.5 pl-8 pr-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:ring-1 focus:ring-accent-yellow"
+              aria-label="Cari"
+            />
+          </div>
+        ) : null}
 
         {sortOptions.length > 0 ? (
           <section>

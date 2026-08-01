@@ -7,6 +7,8 @@ export default function DefektaFilterPills({
   pbfTerpilih = [],
   onChange,
   disabled = false,
+  /** Saat true: tanpa -mx/padding sendiri (untuk di dalam StickySearchBar). */
+  embedded = false,
 }) {
   const pills = [
     { key: 'semua', label: 'Semua' },
@@ -23,7 +25,13 @@ export default function DefektaFilterPills({
   ];
 
   return (
-    <div className="-mx-3 mb-2 flex gap-1 overflow-x-auto px-3 scrollbar-hide">
+    <div
+      className={
+        embedded
+          ? 'flex gap-1 overflow-x-auto scrollbar-hide'
+          : '-mx-3 mb-2 flex gap-1 overflow-x-auto px-3 scrollbar-hide'
+      }
+    >
       {pills.map((p) => {
         const active = activeKey === p.key;
         return (

@@ -3,10 +3,17 @@ import { ChevronDown, Search, X } from 'lucide-react';
 
 /**
  * Multi-select searchable supplier picker (chips + dropdown).
+ * Chip: [Inisial] Nama obat PBF
  *
  * @param {{
  *   options: Array<{ id: string, nama?: string | null, inisial?: string | null }>,
- *   value: Array<{ id: string, nama?: string | null, inisial?: string | null, pricelist_kode_pbf?: string | null }>,
+ *   value: Array<{
+ *     id: string,
+ *     nama?: string | null,
+ *     inisial?: string | null,
+ *     pricelist_kode_pbf?: string | null,
+ *     pricelist_nama_barang?: string | null,
+ *   }>,
  *   onAdd: (supplier: object) => void,
  *   onRemove: (supplierId: string) => void,
  *   placeholder?: string,
@@ -62,8 +69,16 @@ export default function SearchableSupplierMultiSelect({
     }
   }, [open]);
 
-  function chipLabel(s) {
+  function chipInisial(s) {
     return s.inisial || s.nama || s.id;
+  }
+
+  function chipObatPbf(s) {
+    return (
+      s.pricelist_nama_barang ||
+      s.pricelist_kode_pbf ||
+      null
+    );
   }
 
   return (
@@ -76,29 +91,34 @@ export default function SearchableSupplierMultiSelect({
 
       {value.length > 0 ? (
         <div className="mb-1 flex flex-wrap gap-1">
-          {value.map((s) => (
-            <span
-              key={s.id}
-              className="inline-flex max-w-full items-center gap-1 rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[11px] font-semibold text-text-primary"
-            >
-              <span className="truncate">{chipLabel(s)}</span>
-              {s.pricelist_kode_pbf ? (
-                <span className="truncate font-normal text-text-muted">
-                  · {s.pricelist_kode_pbf}
+          {value.map((s) => {
+            const obatPbf = chipObatPbf(s);
+            return (
+              <span
+                key={s.id}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-[4px] bg-bg-surface-hover px-1.5 py-0.5 text-[11px] text-text-primary"
+              >
+                <span className="shrink-0 rounded-[4px] bg-accent-yellow px-1 py-0.5 text-[10px] font-semibold leading-none text-bg-base">
+                  {chipInisial(s)}
                 </span>
-              ) : null}
-              {!disabled ? (
-                <button
-                  type="button"
-                  onClick={() => onRemove(s.id)}
-                  className="shrink-0 text-text-muted hover:text-state-error"
-                  aria-label={`Hapus ${chipLabel(s)}`}
-                >
-                  <X className="h-3 w-3" strokeWidth={2.5} />
-                </button>
-              ) : null}
-            </span>
-          ))}
+                {obatPbf ? (
+                  <span className="min-w-0 truncate font-medium leading-none">
+                    {obatPbf}
+                  </span>
+                ) : null}
+                {!disabled ? (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(s.id)}
+                    className="shrink-0 text-text-muted hover:text-state-error"
+                    aria-label={`Hapus ${chipInisial(s)}`}
+                  >
+                    <X className="h-3 w-3" strokeWidth={2.5} />
+                  </button>
+                ) : null}
+              </span>
+            );
+          })}
         </div>
       ) : null}
 

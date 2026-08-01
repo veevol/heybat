@@ -166,9 +166,9 @@ function sessionInfoPayload(session) {
   });
 }
 
-function cutoffThreeMonths() {
+function cutoffTwelveMonths() {
   const d = new Date();
-  d.setMonth(d.getMonth() - 3);
+  d.setMonth(d.getMonth() - 12);
   return d.toISOString();
 }
 
@@ -399,7 +399,7 @@ router.delete('/upload-batches/:id', requireOwner, async (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/ringkas-preview', requireOwner, async (_req, res) => {
   try {
-    const cutoff = cutoffThreeMonths();
+    const cutoff = cutoffTwelveMonths();
     const rows = await fetchAllRows(() =>
       supabase
         .from('stok_obat')
@@ -471,7 +471,7 @@ router.get('/ringkas-preview', requireOwner, async (_req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/ringkas-lama', requireOwner, async (_req, res) => {
   try {
-    const cutoff = cutoffThreeMonths();
+    const cutoff = cutoffTwelveMonths();
     const { data, error } = await supabase.rpc('ringkas_stok_obat_lama', {
       p_cutoff: cutoff,
     });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Archive, Flag, Plus, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Archive, Flag, History, MoreVertical, Plus, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import {
   confirmStokUpload,
   createStokPenandaan,
@@ -10,7 +10,6 @@ import {
   listStokPenandaan,
   listStokTerkini,
   listStokUploadBatches,
-  parseStokPreview,
   refreshStokPreviewInfo,
   runStokRingkasLama,
   selesaiStokPenandaan,
@@ -29,12 +28,14 @@ import SheetModal from '../components/SheetModal';
 import StokRingkasConfirmModal from '../components/StokRingkasConfirmModal';
 import StokTandaiModal, { JENIS_OPTIONS } from '../components/StokTandaiModal';
 import StokUploadPreviewSheet from '../components/StokUploadPreviewSheet';
+import StokUploadSheet from '../components/StokUploadSheet';
+import StickySearchBar from '../components/StickySearchBar';
 import SubmitSpinner from '../components/SubmitSpinner';
 import TambahObatDariMatchingModal from '../components/TambahObatDariMatchingModal';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 
-const VALID_STOK_TABS = ['stok', 'upload', 'tindak', 'riwayat'];
+const VALID_STOK_TABS = ['stok', 'tindak', 'riwayat'];
 const EMPTY_FILTERS = { gudang: emptyFilterSection() };
 const EMPTY_SORT = { key: 'nama', direction: 'asc' };
 const EMPTY_OBAT_FORM = {
@@ -134,8 +135,9 @@ export default function StokPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
     const t = searchParams.get('tab');
+    if (t === 'upload') return 'stok';
     return VALID_STOK_TABS.includes(t) ? t : 'stok';
-  }); // stok | upload | riwayat | tindak
+  }); // stok | riwayat | tindak
   const [kodeObatFilter, setKodeObatFilter] = useState(
     () => searchParams.get('kode_obat') || ''
   );
@@ -148,7 +150,8 @@ export default function StokPage() {
   const [jenisBusyId, setJenisBusyId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [preview, setPreview] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [resolvedKodes, setResolvedKodes] = useState(() => new Set());
@@ -160,7 +163,6 @@ export default function StokPage() {
   const [ringkasBusy, setRingkasBusy] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [draftSearch, setDraftSearch] = useState('');
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
   const [sortState, setSortState] = useState(EMPTY_SORT);
@@ -182,7 +184,7 @@ export default function StokPage() {
   const [selesaiBusyId, setSelesaiBusyId] = useState(null);
 
   const toastTimer = useRef(null);
-  const fileInputRef = useRef(null);
+  const menuRef = useRef(null);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -257,27 +259,34 @@ export default function StokPage() {
     };
   }, [tab, loadPenandaan, showToast]);
 
-  async function handleFile(file) {
-    if (!file || busy) return;
-    const name = String(file.name || '').toLowerCase();
-    if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
-      showToast('Hanya file Excel (.xlsx) yang diterima');
-      return;
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function onDoc(e) {
+      if (!menuRef.current?.contains(e.target)) setMenuOpen(false);
     }
-    setBusy(true);
-    try {
-      const result = await parseStokPreview(file);
-      setPreview(result);
-      setResolvedKodes(new Set());
-      setPreviewOpen(true);
-    } catch (err) {
-      showToast(err.message || 'Gagal parse Excel');
-      setPreview(null);
-      setPreviewOpen(false);
-    } finally {
-      setBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    function onKey(e) {
+      if (e.key === 'Escape') setMenuOpen(false);
     }
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  function handleParsed(result) {
+    setPreview(result);
+    setResolvedKodes(new Set());
+    setPreviewOpen(true);
+  }
+
+  function handlePreviewRetry() {
+    if (busy) return;
+    setPreviewOpen(false);
+    setPreview(null);
+    setResolvedKodes(new Set());
+    setUploadOpen(true);
   }
 
   async function handleConfirm() {
@@ -650,18 +659,9 @@ export default function StokPage() {
   }
 
   function openFilterSheet() {
-    setDraftSearch(search);
     setDraftFilters({ gudang: normalizeFilterSection(filters.gudang) });
     setDraftSort({ ...sortState });
     setFilterOpen(true);
-  }
-
-  function onDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    if (!canTambah) return;
-    const file = e.dataTransfer?.files?.[0];
-    if (file) handleFile(file);
   }
 
   const tabBtn = (id, label) => (
@@ -670,8 +670,8 @@ export default function StokPage() {
       onClick={() => setTab(id)}
       className={`flex-1 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
         tab === id
-          ? 'bg-accent-navy text-white'
-          : 'text-text-secondary hover:bg-bg-surface-hover'
+          ? 'bg-accent-yellow text-bg-base'
+          : 'text-text-secondary hover:bg-bg-surface-hover hover:text-text-primary'
       }`}
     >
       {label}
@@ -684,28 +684,76 @@ export default function StokPage() {
         <button
           type="button"
           onClick={openFilterSheet}
-          className="inline-flex items-center gap-1 rounded-[4px] border border-border-subtle px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-surface-hover"
+          className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
           aria-label="Filter dan cari"
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
-          Filter
         </button>
       ) : null}
-      {isOwner ? (
+      <div className="relative" ref={menuRef}>
         <button
           type="button"
-          onClick={openRingkas}
-          disabled={ringkasBusy}
-          className="inline-flex items-center gap-1 rounded-[4px] border border-border-subtle px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-surface-hover disabled:opacity-50"
+          onClick={() => setMenuOpen((v) => !v)}
+          className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
+          aria-label="Menu stok"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
         >
-          {ringkasBusy ? (
-            <SubmitSpinner className="h-3.5 w-3.5" />
-          ) : (
-            <Archive className="h-3.5 w-3.5" />
-          )}
-          Ringkas Data Lama
+          <MoreVertical className="h-5 w-5" />
         </button>
-      ) : null}
+        {menuOpen ? (
+          <div
+            role="menu"
+            className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[12rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
+          >
+            {canTambah ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setUploadOpen(true);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
+              >
+                <Upload className="h-3.5 w-3.5 text-accent-yellow" />
+                Upload Stok
+              </button>
+            ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                setTab('riwayat');
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
+            >
+              <History className="h-3.5 w-3.5 text-accent-yellow" />
+              Riwayat Upload
+            </button>
+            {isOwner ? (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={ringkasBusy}
+                onClick={() => {
+                  setMenuOpen(false);
+                  openRingkas();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-state-error transition hover:bg-bg-surface-hover disabled:opacity-50"
+              >
+                {ringkasBusy ? (
+                  <SubmitSpinner className="h-3.5 w-3.5" />
+                ) : (
+                  <Archive className="h-3.5 w-3.5" />
+                )}
+                Ringkas Data Lama
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 
@@ -714,10 +762,16 @@ export default function StokPage() {
       <div className="space-y-3">
         <div className="flex flex-wrap gap-1 rounded-[4px] border border-border-subtle bg-bg-surface p-0.5">
           {tabBtn('stok', 'Stok terkini')}
-          {tabBtn('upload', 'Upload')}
           {tabBtn('tindak', 'Perlu Ditindaklanjuti')}
-          {tabBtn('riwayat', 'Riwayat Upload')}
         </div>
+
+        {tab === 'stok' ? (
+          <StickySearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder="Cari kode / nama obat…"
+          />
+        ) : null}
 
         {loading ? (
           <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
@@ -725,58 +779,10 @@ export default function StokPage() {
           </div>
         ) : null}
 
-        {!loading && tab === 'upload' ? (
-          canTambah ? (
-            <section
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
-              className={`rounded-[4px] border border-dashed px-3 py-6 transition ${
-                dragOver
-                  ? 'border-accent-yellow bg-accent-yellow/10'
-                  : 'border-border-subtle bg-bg-surface'
-              }`}
-            >
-              <div className="flex flex-col items-center gap-3 text-center">
-                <p className="text-[13px] font-medium text-text-primary">
-                  Upload Excel Stok Vmedis (.xlsx)
-                </p>
-                <p className="max-w-sm text-[11px] text-text-secondary">
-                  Snapshot stok per batch. Styles rusak diperbaiki otomatis. Data menumpuk
-                  (tidak mengganti upload sebelumnya).
-                </p>
-                <label
-                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white ${
-                    busy ? 'pointer-events-none opacity-50' : ''
-                  }`}
-                >
-                  {busy ? <SubmitSpinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
-                  Pilih Excel
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    className="hidden"
-                    disabled={busy}
-                    onChange={(e) => handleFile(e.target.files?.[0] || null)}
-                  />
-                </label>
-              </div>
-            </section>
-          ) : (
-            <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-              Tidak punya izin upload stok.
-            </div>
-          )
-        ) : null}
-
         {!loading && tab === 'stok' ? (
           items.length === 0 ? (
             <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-              Belum ada snapshot stok. Upload Excel dari tab Upload.
+              Belum ada snapshot stok. Upload Excel dari menu titik tiga.
             </div>
           ) : filteredItems.length === 0 ? (
             <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
@@ -904,14 +910,14 @@ export default function StokPage() {
         {!loading && tab === 'tindak' ? (
           <div className="space-y-2">
             {kodeObatFilter ? (
-              <div className="flex items-center gap-1.5 rounded-[4px] border border-accent-navy/40 bg-accent-navy/10 px-2 py-1 text-[11px] text-accent-navy">
+              <div className="flex items-center gap-1.5 rounded-[4px] border border-accent-yellow/40 bg-accent-yellow/15 px-2 py-1 text-[11px] text-accent-yellow">
                 <span className="min-w-0 flex-1 truncate">
-                  Difilter untuk kode obat: <strong>{kodeObatFilter}</strong>
+                  Difilter untuk kode obat: <strong className="text-text-primary">{kodeObatFilter}</strong>
                 </span>
                 <button
                   type="button"
                   onClick={clearKodeObatFilter}
-                  className="shrink-0 rounded-[4px] p-0.5 hover:bg-accent-navy/20"
+                  className="shrink-0 rounded-[4px] p-0.5 text-text-primary hover:bg-accent-yellow/20"
                   aria-label="Hapus filter kode obat"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -927,8 +933,8 @@ export default function StokPage() {
                   onClick={() => setPenandaanFilter(f.value)}
                   className={`rounded-[4px] px-2 py-1 text-[11px] font-medium ${
                     penandaanFilter === f.value
-                      ? 'bg-accent-navy text-white'
-                      : 'border border-border-subtle text-text-secondary hover:bg-bg-surface-hover'
+                      ? 'bg-accent-yellow text-bg-base'
+                      : 'border border-border-subtle text-text-secondary hover:bg-bg-surface-hover hover:text-text-primary'
                   }`}
                 >
                   {f.label}
@@ -967,7 +973,7 @@ export default function StokPage() {
                               {nama}
                             </p>
                             {otomatis ? (
-                              <span className="rounded-[4px] bg-accent-navy/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-navy">
+                              <span className="rounded-[4px] bg-accent-yellow px-1.5 py-0.5 text-[10px] font-semibold text-bg-base">
                                 Otomatis
                               </span>
                             ) : (
@@ -1134,13 +1140,7 @@ export default function StokPage() {
         <StokUploadPreviewSheet
           preview={preview}
           onConfirm={handleConfirm}
-          onCancel={() => {
-            if (!busy) {
-              setPreviewOpen(false);
-              setPreview(null);
-              setResolvedKodes(new Set());
-            }
-          }}
+          onCancel={handlePreviewRetry}
           submitting={busy}
           canTambahObat={canTambahObat}
           canTandai={canEdit}
@@ -1149,6 +1149,13 @@ export default function StokPage() {
           onTandai={openTandaiPreview}
         />
       ) : null}
+
+      <StokUploadSheet
+        open={uploadOpen && !previewOpen}
+        onClose={() => setUploadOpen(false)}
+        onParsed={handleParsed}
+        onToast={showToast}
+      />
 
       {quickOpen ? (
         <TambahObatDariMatchingModal
@@ -1306,9 +1313,7 @@ export default function StokPage() {
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         title="Filter Stok"
-        searchValue={draftSearch}
-        onSearchChange={setDraftSearch}
-        searchPlaceholder="Cari kode / nama obat…"
+        showSearch={false}
         sortOptions={[
           { key: 'nama', label: 'Nama obat' },
           { key: 'stok', label: 'Total stok' },
@@ -1326,16 +1331,13 @@ export default function StokPage() {
         filterState={draftFilters}
         onFilterChange={setDraftFilters}
         onApply={() => {
-          setSearch(draftSearch);
           setFilters({ gudang: normalizeFilterSection(draftFilters.gudang) });
           setSortState({ ...draftSort });
           setFilterOpen(false);
         }}
         onReset={() => {
-          setDraftSearch('');
           setDraftFilters({ gudang: emptyFilterSection() });
           setDraftSort(EMPTY_SORT);
-          setSearch('');
           setFilters({ gudang: emptyFilterSection() });
           setSortState(EMPTY_SORT);
           setFilterOpen(false);

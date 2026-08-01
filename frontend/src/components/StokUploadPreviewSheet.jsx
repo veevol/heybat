@@ -112,7 +112,7 @@ export default function StokUploadPreviewSheet({
     <SheetModal
       title={
         <h2 className="text-[15px] font-semibold leading-none text-text-primary">
-          Preview Upload Stok
+          Preview Hasil Upload
         </h2>
       }
       onClose={onCancel}
@@ -125,7 +125,7 @@ export default function StokUploadPreviewSheet({
             disabled={submitting}
             className="w-full rounded-[4px] border border-border-subtle px-3 py-2 text-[13px] text-text-primary disabled:opacity-50 sm:w-auto"
           >
-            Batal
+            File Salah, Ulangi
           </button>
           <button
             type="button"
@@ -133,7 +133,7 @@ export default function StokUploadPreviewSheet({
             disabled={submitting || total < 1}
             className="inline-flex w-full items-center justify-center rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white disabled:opacity-50 sm:w-auto"
           >
-            {submitting ? <SubmitSpinner /> : `Simpan ${total} baris`}
+            {submitting ? <SubmitSpinner /> : 'Lanjutkan, Simpan Data'}
           </button>
         </div>
       }
@@ -198,7 +198,7 @@ export default function StokUploadPreviewSheet({
                           type="button"
                           disabled={submitting}
                           onClick={() => onTambahObat(row)}
-                          className="inline-flex shrink-0 items-center gap-0.5 rounded-[4px] border border-accent-navy/30 bg-accent-navy/10 px-1.5 py-1 text-[10px] font-medium text-accent-navy hover:bg-accent-navy/15 disabled:opacity-50"
+                          className="inline-flex shrink-0 items-center gap-0.5 rounded-[4px] border border-accent-yellow/40 bg-accent-yellow/15 px-1.5 py-1 text-[10px] font-medium text-accent-yellow hover:bg-accent-yellow/25 disabled:opacity-50"
                         >
                           <Plus className="h-3 w-3" />
                           Tambah ke Obat Yelo
