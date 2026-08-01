@@ -280,6 +280,8 @@ export default function MatchingPage() {
   const canTambahObat = hasAccess('data-obat-yelo', 'tambah');
   const canUploadPricelist = hasAccess('pricelist-pbf', 'tambah');
   const isOwner = profile?.is_owner === true;
+  /** FO: tombol + Data Obat hanya di card No Match (kind rejected). */
+  const isFoGroup = !isOwner && profile?.group?.nama === 'FO';
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -443,11 +445,13 @@ export default function MatchingPage() {
       const next = { ...prev };
       for (const card of pageCards) {
         const key = card.pricelist?.kode_pbf;
-        if (!key || next[key]) continue;
+        if (!key) continue;
+        // Pending: selalu sync dari matching server (jangan biarkan selection stale dari Belum/No Match).
         if (card.kind === 'pending' && card.kode_obat_yelo) {
           next[key] = card.kode_obat_yelo;
           continue;
         }
+        if (next[key]) continue;
         const top = [...(card.kandidat || [])].sort(
           (a, b) => (b.skor_kemiripan || 0) - (a.skor_kemiripan || 0)
         )[0];
@@ -716,6 +720,11 @@ export default function MatchingPage() {
     if (!kodePbf) return false;
 
     const pendingCard = buildPendingCard(sourceCard, matching, selectedObat);
+    const selectedKode =
+      matching.kode_obat_yelo || selectedObat?.kode_obat || null;
+    if (selectedKode) {
+      setSelections((prev) => ({ ...prev, [kodePbf]: selectedKode }));
+    }
     const fromRejected = sourceCard.kind === 'rejected';
     const fromDitolak = sourceCard.kind === 'ditolak';
     const deltas = fromRejected
@@ -1631,7 +1640,9 @@ export default function MatchingPage() {
                 onTolak={() => handleTolak(card)}
                 busy={submittingKeys.has(card.board_key)}
                 canUsulkan={canUsulkan}
-                canTambahObat={canTambahObat}
+                canTambahObat={
+                  canTambahObat && (!isFoGroup || card.kind === 'rejected')
+                }
                 isOwner={isOwner}
               />
             );

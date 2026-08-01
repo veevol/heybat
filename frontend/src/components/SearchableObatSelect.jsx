@@ -25,6 +25,8 @@ export default function SearchableObatSelect({
   const [query, setQuery] = useState('');
   const rootRef = useRef(null);
   const inputRef = useRef(null);
+  const listRef = useRef(null);
+  const activeItemRef = useRef(null);
 
   const selected = useMemo(
     () => options.find((o) => o.kode_obat === value) || null,
@@ -37,8 +39,10 @@ export default function SearchableObatSelect({
       String(a.nama_obat || '').localeCompare(String(b.nama_obat || ''), 'id', {
         sensitivity: 'base',
       });
-    const base = q
-      ? options.filter((o) => {
+
+    if (q) {
+      return [...options]
+        .filter((o) => {
           const nama = String(o.nama_obat || '').toLowerCase();
           const kode = String(o.kode_obat || '').toLowerCase();
           const sat1 = String(o.satuan_1?.nama || '').toLowerCase();
@@ -50,8 +54,13 @@ export default function SearchableObatSelect({
             sat2.includes(q)
           );
         })
-      : options;
-    return [...base].sort(byNama).slice(0, 80);
+        .sort(byNama)
+        .slice(0, 80);
+    }
+
+    // Urut A–Z penuh. Saat buka, list di-scroll ke pilihan collapse:
+    // scroll naik → A,B,C ; scroll turun → E,F,G.
+    return [...options].sort(byNama);
   }, [options, query]);
 
   useEffect(() => {
@@ -63,19 +72,32 @@ export default function SearchableObatSelect({
   }, []);
 
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      requestAnimationFrame(() => inputRef.current?.focus());
+    if (!open) return undefined;
+    setQuery('');
+
+    function scrollSelectedToTop() {
+      const list = listRef.current;
+      const item = activeItemRef.current;
+      if (!list || !item) return;
+      // Tempatkan item aktif di tepi atas viewport list (bukan putar urutan).
+      list.scrollTop += item.getBoundingClientRect().top - list.getBoundingClientRect().top;
     }
+
+    // Double rAF: tunggu list + item ter-mount sebelum ukur posisi.
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      requestAnimationFrame(scrollSelectedToTop);
+    });
+    return undefined;
   }, [open]);
 
-  function renderLabel(obat, { truncate = true } = {}) {
+  function renderLabel(obat, { truncate = true, muted = false } = {}) {
     const { nama, meta } = obatDropdownParts(obat);
     return (
       <span
-        className={`min-w-0 flex-1 text-[13px] leading-snug text-text-primary ${
-          truncate ? 'truncate' : ''
-        }`}
+        className={`min-w-0 flex-1 text-[13px] leading-snug ${
+          muted ? 'text-text-muted' : 'text-text-primary'
+        } ${truncate ? 'truncate' : ''}`}
       >
         <span className="font-bold">{nama}</span>
         {meta ? <span className="font-normal"> {meta}</span> : null}
@@ -87,7 +109,10 @@ export default function SearchableObatSelect({
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setQuery('');
+          setOpen((v) => !v);
+        }}
         className={`flex w-full items-center gap-2 rounded-[4px] border ${borderClassName} bg-bg-surface px-3 py-1.5 text-left outline-none focus:border-accent-yellow`}
       >
         {selected ? (
@@ -112,7 +137,10 @@ export default function SearchableObatSelect({
               className="w-full bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-muted"
             />
           </div>
-          <ul className="max-h-52 overflow-y-auto scrollbar-hide">
+          <ul
+            ref={listRef}
+            className="relative max-h-52 overflow-y-auto scrollbar-hide"
+          >
             {filtered.length === 0 ? (
               <li className="px-3 py-2 text-[12px] text-text-muted">
                 Tidak ada hasil
@@ -121,7 +149,7 @@ export default function SearchableObatSelect({
               filtered.map((o) => {
                 const active = o.kode_obat === value;
                 return (
-                  <li key={o.kode_obat}>
+                  <li key={o.kode_obat} ref={active ? activeItemRef : undefined}>
                     <button
                       type="button"
                       onClick={() => {
@@ -129,10 +157,12 @@ export default function SearchableObatSelect({
                         setOpen(false);
                       }}
                       className={`flex w-full items-center px-3 py-1.5 text-left hover:bg-bg-surface-hover ${
-                        active ? 'bg-bg-surface-hover' : ''
+                        active
+                          ? 'bg-bg-surface-hover text-text-primary'
+                          : 'text-text-muted'
                       }`}
                     >
-                      {renderLabel(o)}
+                      {renderLabel(o, { muted: !active })}
                     </button>
                   </li>
                 );

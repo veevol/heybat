@@ -178,6 +178,18 @@ export default function ObatYeloFormModal({
         </section>
 
         <section className={cardClass}>
+          <FormRow label="Substitusi">
+            <RefSelectWithAdd
+              hideLabel
+              label="Substitusi"
+              value={values.grup_substitusi_id}
+              options={refs['grup-substitusi']}
+              onChange={(id) => onField('grup_substitusi_id', id)}
+              onCreate={makeCreateHandler('grup-substitusi')}
+              allowEmpty
+              emptyLabel="Non Subtitusi"
+            />
+          </FormRow>
           <FormRow label="Kandungan">
             <RefSelectWithAdd
               hideLabel
@@ -188,18 +200,6 @@ export default function ObatYeloFormModal({
               onCreate={makeCreateHandler('kandungan')}
               allowEmpty
               emptyLabel="Tidak ada"
-            />
-          </FormRow>
-          <FormRow label="Substitusi">
-            <RefSelectWithAdd
-              hideLabel
-              label="Substitusi"
-              value={values.grup_substitusi_id}
-              options={refs['grup-substitusi']}
-              onChange={(id) => onField('grup_substitusi_id', id)}
-              onCreate={makeCreateHandler('grup-substitusi')}
-              allowEmpty
-              emptyLabel="Tidak ada substitusi"
             />
           </FormRow>
           <FormRow label="Golongan">

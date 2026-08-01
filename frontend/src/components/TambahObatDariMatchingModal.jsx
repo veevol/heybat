@@ -15,13 +15,19 @@ function Field({
   required = false,
   placeholder = '',
   hint = null,
+  labelNote = null,
   type = 'text',
 }) {
   return (
     <label className="block space-y-0.5">
-      <span className="text-[11px] leading-none text-text-secondary">
-        {label}
-        {required ? <span className="text-accent-yellow"> *</span> : null}
+      <span className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[11px] leading-none text-text-secondary">
+        <span>
+          {label}
+          {required ? <span className="text-accent-yellow"> *</span> : null}
+        </span>
+        {labelNote ? (
+          <span className="font-normal text-accent-yellow">{labelNote}</span>
+        ) : null}
       </span>
       <input
         type={type}
@@ -166,11 +172,18 @@ export default function TambahObatDariMatchingModal({
           onChange={onChange}
           required
           placeholder="Nama obat"
+          labelNote="Contoh Generik: Amoxicillin 500 mg - DXM"
         />
 
-        <p className="pt-1 text-[10px] text-text-muted">
-          Field di bawah opsional — boleh dilewati, lengkapi nanti di Data Obat Yelo.
-        </p>
+        <RefSelectWithAdd
+          label="Grup Substitusi"
+          value={values.grup_substitusi_id}
+          options={refs['grup-substitusi']}
+          onChange={(id) => onField('grup_substitusi_id', id)}
+          onCreate={makeCreateHandler('grup-substitusi')}
+          allowEmpty
+          emptyLabel="Non Subtitusi"
+        />
 
         <RefSelectWithAdd
           label="Kandungan"
@@ -231,16 +244,6 @@ export default function TambahObatDariMatchingModal({
             placeholder="0"
           />
         </div>
-
-        <RefSelectWithAdd
-          label="Grup Substitusi"
-          value={values.grup_substitusi_id}
-          options={refs['grup-substitusi']}
-          onChange={(id) => onField('grup_substitusi_id', id)}
-          onCreate={makeCreateHandler('grup-substitusi')}
-          allowEmpty
-          emptyLabel="Tidak ada substitusi"
-        />
 
         {displayError ? (
           <p className="rounded-[4px] border border-state-error/40 bg-state-error/10 px-2 py-1.5 text-[12px] text-state-error">

@@ -199,7 +199,7 @@ export default function ObatYeloDetailSheet({
             <Row label="Isi Kemasan">{isiKemasan}</Row>
             <Row label="Min Jual">{minJualLabel}</Row>
             <Row label="Kandungan">{obat.kandungan?.nama}</Row>
-            <Row label="Substitusi">{obat.grup_substitusi?.nama || null}</Row>
+            <Row label="Substitusi">{obat.grup_substitusi?.nama || 'Non Subtitusi'}</Row>
             <Row label="Golongan">{golonganNama || null}</Row>
             <Row label="Supplier">{supplierText || null}</Row>
           </dl>
