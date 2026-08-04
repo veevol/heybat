@@ -94,11 +94,11 @@ export default function MatchingActionCard({
               {row.nama_barang || '—'}
             </h3>
             <div className="flex min-w-0 items-center gap-2 text-[11px] font-normal leading-snug text-text-muted">
-              <span className="min-w-0 flex-1 truncate text-left italic">
-                {row.catatan_kondisi || '\u00a0'}
-              </span>
-              <span className="shrink-0 whitespace-nowrap text-right">
+              <span className="shrink-0 whitespace-nowrap text-left">
                 {[qtyLabel, hargaLabel].filter(Boolean).join(' · ') || '—'}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-right italic">
+                {row.catatan_kondisi || '\u00a0'}
               </span>
             </div>
           </>
@@ -113,11 +113,11 @@ export default function MatchingActionCard({
               </h3>
             </div>
             <div className="flex min-w-0 items-center gap-2 text-[11px] font-normal leading-snug text-text-muted">
-              <span className="min-w-0 flex-1 truncate text-left italic">
-                {row.catatan_kondisi || '\u00a0'}
-              </span>
-              <span className="shrink-0 whitespace-nowrap text-right">
+              <span className="shrink-0 whitespace-nowrap text-left">
                 {[qtyLabel, hargaLabel].filter(Boolean).join(' · ') || '—'}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-right italic">
+                {row.catatan_kondisi || '\u00a0'}
               </span>
             </div>
           </>
