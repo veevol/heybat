@@ -475,11 +475,16 @@ export default function PricelistUploadSheet({
       {pdfMappingOpen && pdfMappingMeta ? (
         <PdfMappingSheet
           mappingRows={pdfMappingMeta.mapping_rows || []}
+          mappingTotal={pdfMappingMeta.mapping_total ?? null}
+          mappingHasMore={Boolean(pdfMappingMeta.mapping_has_more)}
+          pbfId={pdfMappingMeta.pbf_id || pbfId}
+          sessionId={pdfMappingMeta.session_id}
           initialKolomPosisi={pdfMappingMeta.existing_kolom_posisi}
           barisMulaiData={pdfBarisMulai}
           formatAngka={pdfFormatAngka}
           onBarisMulaiChange={setPdfBarisMulai}
           onFormatAngkaChange={setPdfFormatAngka}
+          onToast={toast}
           onClose={() => {
             if (!busy) {
               setPdfMappingOpen(false);

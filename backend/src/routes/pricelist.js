@@ -992,6 +992,7 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
     }
 
     if (!pdfTemplate) {
+      const mappingPreview = buildMappingPreviewRows(extracted.pages);
       const sessionId = createUploadSession({
         kind: 'pdf_raw',
         pbfId,
@@ -1007,7 +1008,11 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
         session_id: sessionId,
         pbf_id: pbfId,
         num_pages: extracted.numPages,
-        mapping_rows: buildMappingPreviewRows(extracted.pages),
+        mapping_rows: mappingPreview.rows,
+        mapping_total: mappingPreview.total,
+        mapping_offset: mappingPreview.offset,
+        mapping_limit: mappingPreview.limit,
+        mapping_has_more: mappingPreview.has_more,
         existing_kolom_posisi: existingTemplate?.tipe_sumber === 'pdf'
           ? existingTemplate.kolom_posisi
           : null,
@@ -1076,6 +1081,52 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
     return res.status(400).json({ error: err.message || 'Gagal memproses PDF' });
   }
 });
+
+// GET /api/pricelist/pdf-mapping-rows — halaman berikutnya untuk sheet mapping PDF
+router.get(
+  '/pdf-mapping-rows',
+  requireMenuAksi('pricelist-pbf', 'tambah'),
+  async (req, res) => {
+    try {
+      const pbfId = normalizeText(req.query?.pbf_id);
+      const sessionId = normalizeText(req.query?.session_id);
+      if (!pbfId || !sessionId) {
+        return res.status(400).json({ error: 'pbf_id dan session_id wajib' });
+      }
+
+      const rawSession = getUploadSession(sessionId);
+      if (!rawSession || rawSession.kind !== 'pdf_raw' || rawSession.pbfId !== pbfId) {
+        return res.status(410).json({
+          error: 'Sesi PDF sudah habis atau tidak valid — upload ulang file',
+        });
+      }
+
+      const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
+      const limitRaw = parseInt(String(req.query.limit || '12'), 10);
+      const limit = Number.isFinite(limitRaw) ? limitRaw : 12;
+
+      const mappingPreview = buildMappingPreviewRows(rawSession.pages, {
+        offset,
+        limit,
+      });
+
+      return res.json({
+        session_id: sessionId,
+        pbf_id: pbfId,
+        mapping_rows: mappingPreview.rows,
+        mapping_total: mappingPreview.total,
+        mapping_offset: mappingPreview.offset,
+        mapping_limit: mappingPreview.limit,
+        mapping_has_more: mappingPreview.has_more,
+      });
+    } catch (err) {
+      console.error('[GET /pricelist/pdf-mapping-rows]', err);
+      return res.status(500).json({
+        error: err.message || 'Gagal memuat baris mapping',
+      });
+    }
+  }
+);
 
 // POST /api/pricelist/save-pdf-mapping — simpan template PDF + parse ulang → preview session
 router.post('/save-pdf-mapping', requireMenuAksi('pricelist-pbf', 'edit'), async (req, res) => {

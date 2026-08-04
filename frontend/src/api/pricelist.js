@@ -135,6 +135,22 @@ export async function parsePricelistPdfPreview({
   return parseResponse(res);
 }
 
+/** Muat baris mapping PDF berikutnya dari sesi upload */
+export async function loadPricelistPdfMappingRows({
+  pbfId,
+  sessionId,
+  offset = 0,
+  limit = 12,
+}) {
+  const qs = new URLSearchParams({
+    pbf_id: pbfId,
+    session_id: sessionId,
+    offset: String(offset),
+    limit: String(limit),
+  });
+  return apiJson(apiUrl(`/api/pricelist/pdf-mapping-rows?${qs.toString()}`));
+}
+
 /** Simpan mapping posisi PDF + kembalikan preview session */
 export async function savePricelistPdfMapping({
   pbfId,

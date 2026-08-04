@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { loadPricelistPdfMappingRows } from '../api/pricelist';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
 
@@ -8,6 +9,8 @@ const FIELDS = [
   { key: 'harga', label: 'Harga', required: false, color: 'bg-state-success/80 text-bg-base' },
   { key: 'satuan', label: 'Satuan', required: false, color: 'bg-state-warning/80 text-bg-base' },
 ];
+
+const PAGE_SIZE = 12;
 
 function padRange(tokens, pad = 3) {
   if (!tokens.length) return null;
@@ -22,9 +25,14 @@ function padRange(tokens, pad = 3) {
  * List-based PDF column mapper.
  * Staff picks an active field, then taps text tokens on sample rows.
  * x_min/x_max ranges are derived from selected tokens.
+ * "Muat lagi" appends more lines from the same upload session.
  */
 export default function PdfMappingSheet({
   mappingRows = [],
+  mappingTotal = null,
+  mappingHasMore = false,
+  pbfId = null,
+  sessionId = null,
   initialKolomPosisi = null,
   barisMulaiData = 1,
   formatAngka = 'id',
@@ -33,23 +41,36 @@ export default function PdfMappingSheet({
   onClose,
   onConfirm,
   submitting = false,
+  onToast = null,
 }) {
   const [activeField, setActiveField] = useState('nama');
-  const [assignments, setAssignments] = useState(() => {
-    // tokenId → fieldKey
-    const map = {};
-    return map;
-  });
+  const [assignments, setAssignments] = useState(() => ({}));
+  const [rows, setRows] = useState(() => mappingRows || []);
+  const [hasMore, setHasMore] = useState(Boolean(mappingHasMore));
+  const [total, setTotal] = useState(
+    mappingTotal != null ? mappingTotal : (mappingRows || []).length
+  );
+  const [loadMoreBusy, setLoadMoreBusy] = useState(false);
+
+  useEffect(() => {
+    setRows(mappingRows || []);
+    setHasMore(Boolean(mappingHasMore));
+    setTotal(mappingTotal != null ? mappingTotal : (mappingRows || []).length);
+    setAssignments({});
+    setActiveField('nama');
+    // Reset hanya saat sesi upload baru dibuka
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   const tokenLookup = useMemo(() => {
     const map = new Map();
-    for (const row of mappingRows) {
+    for (const row of rows) {
       for (const token of row.tokens || []) {
         map.set(token.id, token);
       }
     }
     return map;
-  }, [mappingRows]);
+  }, [rows]);
 
   const derivedPosisi = useMemo(() => {
     const byField = { nama: [], qty: [], harga: [], satuan: [] };
@@ -63,7 +84,6 @@ export default function PdfMappingSheet({
       const range = padRange(byField[key]);
       if (range) posisi[key] = range;
     }
-    // Prefer derived; if empty and initial exists, show initial as hint only (not auto-confirm)
     return posisi;
   }, [assignments, tokenLookup]);
 
@@ -89,9 +109,35 @@ export default function PdfMappingSheet({
     });
   }
 
+  async function handleLoadMore() {
+    if (!pbfId || !sessionId || loadMoreBusy || submitting || !hasMore) return;
+    setLoadMoreBusy(true);
+    try {
+      const data = await loadPricelistPdfMappingRows({
+        pbfId,
+        sessionId,
+        offset: rows.length,
+        limit: PAGE_SIZE,
+      });
+      const nextRows = data.mapping_rows || [];
+      setRows((prev) => {
+        const seen = new Set(prev.map((r) => r.__row));
+        const appended = nextRows.filter((r) => !seen.has(r.__row));
+        return [...prev, ...appended];
+      });
+      if (data.mapping_total != null) setTotal(data.mapping_total);
+      setHasMore(Boolean(data.mapping_has_more));
+    } catch (err) {
+      onToast?.(err.message || 'Gagal memuat baris berikutnya');
+    } finally {
+      setLoadMoreBusy(false);
+    }
+  }
+
   const effectivePosisi =
     Object.keys(derivedPosisi).length > 0 ? derivedPosisi : initialKolomPosisi;
   const canSubmit = Boolean(effectivePosisi?.nama);
+  const canLoadMore = Boolean(pbfId && sessionId && hasMore);
 
   return (
     <SheetModal
@@ -178,13 +224,6 @@ export default function PdfMappingSheet({
           })}
         </div>
 
-        {initialKolomPosisi?.nama && Object.keys(derivedPosisi).length === 0 ? (
-          <p className="text-[11px] text-text-muted">
-            Template posisi kolom lama akan dipakai ulang. Tandai teks baru hanya jika ingin
-            mengubah area kolom; atau cukup ubah Format Angka lalu Lanjut Preview.
-          </p>
-        ) : null}
-
         <label className="block space-y-0.5">
           <span className="text-[11px] text-text-secondary">Format angka</span>
           <select
@@ -193,10 +232,10 @@ export default function PdfMappingSheet({
             className="w-full rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[13px] text-text-primary outline-none focus:border-accent-yellow"
           >
             <option value="id">Indonesia (titik/koma = ribuan)</option>
-            <option value="intl">Internasional (koma = ribuan, titik = desimal)</option>
+            <option value="intl">Internasional (koma ribuan, titik desimal)</option>
           </select>
           <p className="text-[10px] leading-snug text-text-muted">
-            Contoh ID: 13,800 atau 13.800 → 13800. Contoh Intl: 13,800.50 → 13800.5
+            Contoh ID: 13.800 → 13800. Intl: 13,800.50 → 13800.5
           </p>
         </label>
 
@@ -218,12 +257,12 @@ export default function PdfMappingSheet({
         </label>
 
         <div className="max-h-[46vh] space-y-1.5 overflow-y-auto scrollbar-hide rounded-[4px] border border-border-subtle bg-bg-base p-2">
-          {mappingRows.length === 0 ? (
+          {rows.length === 0 ? (
             <p className="py-4 text-center text-[12px] text-text-muted">
               Tidak ada teks terdeteksi di halaman awal
             </p>
           ) : (
-            mappingRows.map((row) => (
+            rows.map((row) => (
               <div key={row.__row} className="rounded-[4px] border border-border-subtle/70 p-1.5">
                 <div className="mb-1 text-[10px] text-text-muted">
                   Baris #{row.__row}
@@ -253,6 +292,23 @@ export default function PdfMappingSheet({
               </div>
             ))
           )}
+
+          {canLoadMore ? (
+            <button
+              type="button"
+              onClick={handleLoadMore}
+              disabled={loadMoreBusy || submitting}
+              className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[12px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+            >
+              {loadMoreBusy ? <SubmitSpinner className="h-3.5 w-3.5" /> : null}
+              Muat lagi ({rows.length}
+              {total ? ` / ${total}` : ''})
+            </button>
+          ) : rows.length > 0 && total > rows.length ? (
+            <p className="py-1 text-center text-[10px] text-text-muted">
+              Menampilkan {rows.length} dari {total} baris
+            </p>
+          ) : null}
         </div>
       </div>
     </SheetModal>

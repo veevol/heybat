@@ -136,8 +136,22 @@ function allLinesFromPages(pages, maxDiff = Y_TOLERANCE) {
   return rows;
 }
 
-function buildMappingPreviewRows(pages, limit = SAMPLE_ROWS) {
-  return allLinesFromPages(pages).slice(0, limit);
+function buildMappingPreviewRows(pages, options = {}) {
+  const limitRaw = Number(options.limit);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(100, Math.floor(limitRaw))
+      : SAMPLE_ROWS;
+  const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
+  const all = allLinesFromPages(pages);
+  const rows = all.slice(offset, offset + limit);
+  return {
+    rows,
+    total: all.length,
+    offset,
+    limit,
+    has_more: offset + rows.length < all.length,
+  };
 }
 
 function midX(token) {
@@ -378,6 +392,7 @@ module.exports = {
   pageToLines,
   allLinesFromPages,
   buildMappingPreviewRows,
+  SAMPLE_ROWS,
   extractMappedPdfRows,
   normalizeKolomPosisi,
   normalizeFormatAngka,
