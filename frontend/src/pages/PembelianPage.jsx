@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, MoreVertical, Search, Upload } from 'lucide-react';
+import {
+  ChevronDown,
+  MoreVertical,
+  Search,
+  Upload,
+  Wallet,
+} from 'lucide-react';
 import {
   listPembelianFaktur,
   listPembelianFakturItems,
@@ -280,13 +286,14 @@ export default function PembelianPage() {
   const { hasAccess } = useAuth();
   const canTambah = hasAccess('pembelian', 'tambah');
 
-  const [tab, setTab] = useState('riwayat'); // riwayat | belum_dibayar
+  const [view, setView] = useState('riwayat'); // riwayat | belum_dibayar
   const [items, setItems] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [q, setQ] = useState('');
-  const [qApplied, setQApplied] = useState('');
+  const [query, setQuery] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -300,15 +307,21 @@ export default function PembelianPage() {
     toastTimer.current = setTimeout(() => setToast(''), 4500);
   }, []);
 
+  useEffect(() => {
+    if (query.trim() !== debouncedQ) setSearchLoading(true);
+    const t = setTimeout(() => setDebouncedQ(query.trim()), 400);
+    return () => clearTimeout(t);
+  }, [query, debouncedQ]);
+
   const loadPage = useCallback(
-    async ({ offset = 0, append = false, query = qApplied } = {}) => {
+    async ({ offset = 0, append = false, q = debouncedQ } = {}) => {
       if (append) setLoadingMore(true);
       else setLoading(true);
       try {
         const data = await listPembelianFaktur({
           limit: PAGE_SIZE,
           offset,
-          q: query,
+          q,
         });
         const next = data.items || [];
         setItems((prev) => (append ? [...prev, ...next] : next));
@@ -322,15 +335,17 @@ export default function PembelianPage() {
       } finally {
         setLoading(false);
         setLoadingMore(false);
+        setSearchLoading(false);
       }
     },
-    [qApplied, showToast]
+    [debouncedQ, showToast]
   );
 
   useEffect(() => {
-    if (tab !== 'riwayat') return;
+    if (view !== 'riwayat') return;
+    setExpandedId(null);
     loadPage({ offset: 0, append: false });
-  }, [tab, loadPage]);
+  }, [view, loadPage]);
 
   useEffect(() => {
     return () => {
@@ -354,57 +369,34 @@ export default function PembelianPage() {
     };
   }, [menuOpen]);
 
-  function handleSearch(e) {
-    e.preventDefault();
-    setExpandedId(null);
-    setQApplied(q.trim());
-  }
-
   function handleUploadSuccess() {
     setExpandedId(null);
-    if (tab === 'riwayat') {
-      loadPage({ offset: 0, append: false });
-    }
+    setView('riwayat');
+    loadPage({ offset: 0, append: false });
   }
-
-  const tabBtn = (id, label, badge = null) => (
-    <button
-      key={id}
-      type="button"
-      onClick={() => setTab(id)}
-      className={`inline-flex flex-1 items-center justify-center gap-1 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
-        tab === id
-          ? 'bg-accent-navy text-white'
-          : 'text-text-secondary hover:bg-bg-surface-hover'
-      }`}
-    >
-      {label}
-      {badge}
-    </button>
-  );
 
   return (
     <AppShell
       title="Pembelian"
-      navLoading={loading && tab === 'riwayat'}
+      navLoading={loading && view === 'riwayat'}
       actions={
-        canTambah ? (
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setMenuOpen((v) => !v)}
-              className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
-              aria-label="Menu pembelian"
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
+            aria-label="Menu pembelian"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+          >
+            <MoreVertical className="h-5 w-5" />
+          </button>
+          {menuOpen ? (
+            <div
+              role="menu"
+              className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[12rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
             >
-              <MoreVertical className="h-5 w-5" />
-            </button>
-            {menuOpen ? (
-              <div
-                role="menu"
-                className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[11rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
-              >
+              {canTambah ? (
                 <button
                   type="button"
                   role="menuitem"
@@ -417,49 +409,68 @@ export default function PembelianPage() {
                   <Upload className="h-3.5 w-3.5 text-accent-yellow" />
                   Upload Pembelian
                 </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null
+              ) : null}
+              {view !== 'riwayat' ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setView('riwayat');
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
+                >
+                  Riwayat Faktur
+                </button>
+              ) : null}
+              {view !== 'belum_dibayar' ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setView('belum_dibayar');
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
+                >
+                  <Wallet className="h-3.5 w-3.5 text-accent-yellow" />
+                  Belum Dibayar
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       }
     >
-      <div className="space-y-3">
-        <div className="flex gap-1 rounded-[4px] border border-border-subtle bg-bg-surface p-0.5">
-          {tabBtn('riwayat', 'Riwayat')}
-          {tabBtn('belum_dibayar', 'Belum Dibayar')}
-        </div>
-
-        {tab === 'riwayat' && loading ? (
-          <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-            Memuat…
+      {view === 'riwayat' ? (
+        <>
+          <div className="sticky top-12 z-20 -mx-3 mb-3 space-y-2 bg-bg-surface/80 px-3 pb-2 pt-1 backdrop-blur-md">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Cari faktur, supplier, atau nama obat…"
+                className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-1.5 pl-10 pr-9 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow"
+              />
+              {searchLoading || (loading && Boolean(query.trim())) ? (
+                <SubmitSpinner className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-accent-yellow" />
+              ) : null}
+            </div>
           </div>
-        ) : null}
 
-        {!loading && tab === 'riwayat' ? (
-          <>
-            <form onSubmit={handleSearch} className="flex gap-1.5">
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
-                <input
-                  type="search"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Cari no faktur / supplier…"
-                  className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-2 pl-8 pr-3 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent-yellow focus:outline-none"
-                />
+          <div className="space-y-3">
+            {loading ? (
+              <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+                Memuat…
               </div>
-              <button
-                type="submit"
-                className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover"
-              >
-                Cari
-              </button>
-            </form>
-
-            {items.length === 0 ? (
+            ) : items.length === 0 ? (
               <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                Belum ada data pembelian.
-                {canTambah
+                {debouncedQ
+                  ? 'Tidak ada faktur yang cocok.'
+                  : 'Belum ada data pembelian.'}
+                {!debouncedQ && canTambah
                   ? ' Buka menu titik tiga → Upload Pembelian untuk mengunggah Excel Vmedis.'
                   : ''}
               </div>
@@ -494,15 +505,13 @@ export default function PembelianPage() {
                 ) : null}
               </div>
             )}
-          </>
-        ) : null}
-
-        {tab === 'belum_dibayar' ? (
-          <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-            Modul pembayaran hutang belum tersedia
           </div>
-        ) : null}
-      </div>
+        </>
+      ) : (
+        <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+          Modul pembayaran hutang belum tersedia
+        </div>
+      )}
 
       <PembelianUploadSheet
         open={uploadOpen}

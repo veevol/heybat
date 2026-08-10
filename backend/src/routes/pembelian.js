@@ -93,6 +93,24 @@ router.get('/faktur', requireMenuAksi('pembelian', 'lihat'), async (req, res) =>
     const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
     const q = normalizeText(req.query.q) || '';
 
+    let matchingIdsFromItems = null;
+    if (q) {
+      // Faktur yang punya item nama_obat cocok (paginated lookup via distinct ids)
+      const itemRows = await fetchAllRows(() =>
+        supabase
+          .from('pembelian_item')
+          .select('faktur_id')
+          .ilike('nama_obat', `%${q}%`)
+      );
+      matchingIdsFromItems = [
+        ...new Set(
+          (itemRows || [])
+            .map((r) => r.faktur_id)
+            .filter((id) => id != null)
+        ),
+      ];
+    }
+
     let query = supabase
       .from('pembelian_faktur')
       .select(
@@ -104,9 +122,18 @@ router.get('/faktur', requireMenuAksi('pembelian', 'lihat'), async (req, res) =>
       .range(offset, offset + limit - 1);
 
     if (q) {
-      query = query.or(
-        `no_faktur.ilike.%${q}%,nama_supplier.ilike.%${q}%`
-      );
+      // Escape karakter khusus filter PostgREST di dalam .or()
+      const safe = String(q).replace(/[%_,.()]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (safe) {
+        const parts = [
+          `no_faktur.ilike.%${safe}%`,
+          `nama_supplier.ilike.%${safe}%`,
+        ];
+        if (matchingIdsFromItems?.length) {
+          parts.push(`id.in.(${matchingIdsFromItems.join(',')})`);
+        }
+        query = query.or(parts.join(','));
+      }
     }
 
     const { data, error, count } = await query;
