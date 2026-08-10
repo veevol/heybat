@@ -15,6 +15,7 @@ import MatchingVerifikasiPage from './pages/MatchingVerifikasiPage';
 import MenungguPersetujuanPage from './pages/MenungguPersetujuanPage';
 import PembuatanSpPage from './pages/PembuatanSpPage';
 import PenjualanPage from './pages/PenjualanPage';
+import PembelianPage from './pages/PembelianPage';
 import PlaceholderPage from './pages/PlaceholderPage';
 import PricelistHistoryPage from './pages/PricelistHistoryPage';
 import PricelistPbfPage from './pages/PricelistPbfPage';
@@ -65,6 +66,13 @@ export default function App() {
               }
             >
               <Route path="/penjualan" element={<PenjualanPage />} />
+            </Route>
+            <Route
+              element={
+                <RequireMenuAksi menu="pembelian" aksi="lihat" fallback="/data-supplier" />
+              }
+            >
+              <Route path="/pembelian" element={<PembelianPage />} />
             </Route>
             <Route
               element={

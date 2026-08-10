@@ -1,0 +1,480 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, MoreVertical, Search, Upload } from 'lucide-react';
+import {
+  listPembelianFaktur,
+  listPembelianFakturItems,
+} from '../api/pembelian';
+import AppShell from '../components/layout/AppShell';
+import PembelianUploadSheet from '../components/PembelianUploadSheet';
+import SubmitSpinner from '../components/SubmitSpinner';
+import Toast from '../components/Toast';
+import { useAuth } from '../context/AuthContext';
+
+const PAGE_SIZE = 20;
+
+function formatRupiah(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(num);
+}
+
+function formatNumber(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return new Intl.NumberFormat('id-ID').format(num);
+}
+
+function formatTanggal(value) {
+  if (!value) return '—';
+  const raw = String(value);
+  const d =
+    raw.length <= 10 ? new Date(`${raw}T00:00:00+07:00`) : new Date(raw);
+  if (Number.isNaN(d.getTime())) return '—';
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  }).format(d);
+}
+
+function BayarBadge({ jenis }) {
+  const raw = String(jenis || '').toUpperCase();
+  if (raw === 'TUNAI') {
+    return (
+      <span className="inline-flex rounded-[4px] bg-state-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-success">
+        TUNAI
+      </span>
+    );
+  }
+  if (raw === 'HUTANG') {
+    return (
+      <span className="inline-flex rounded-[4px] bg-state-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-warning">
+        HUTANG
+      </span>
+    );
+  }
+  if (!raw) return null;
+  return (
+    <span className="inline-flex rounded-[4px] bg-bg-base px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
+      {raw}
+    </span>
+  );
+}
+
+function FakturCard({ faktur, expanded, onToggle }) {
+  const [items, setItems] = useState(null);
+  const [itemsBusy, setItemsBusy] = useState(false);
+  const [itemsError, setItemsError] = useState('');
+  const [itemsHasMore, setItemsHasMore] = useState(false);
+  const loadedForId = useRef(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    if (loadedForId.current === faktur.id) return;
+
+    let cancelled = false;
+    async function load() {
+      setItemsBusy(true);
+      setItemsError('');
+      try {
+        const data = await listPembelianFakturItems(faktur.id, {
+          limit: 100,
+          offset: 0,
+        });
+        if (cancelled) return;
+        setItems(data.items || []);
+        setItemsHasMore(Boolean(data.has_more));
+        loadedForId.current = faktur.id;
+      } catch (err) {
+        if (cancelled) return;
+        setItemsError(err.message || 'Gagal memuat item');
+        setItems(null);
+      } finally {
+        if (!cancelled) setItemsBusy(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, faktur.id]);
+
+  async function loadMoreItems() {
+    if (!items || itemsBusy || !itemsHasMore) return;
+    setItemsBusy(true);
+    setItemsError('');
+    try {
+      const data = await listPembelianFakturItems(faktur.id, {
+        limit: 100,
+        offset: items.length,
+      });
+      setItems((prev) => [...(prev || []), ...(data.items || [])]);
+      setItemsHasMore(Boolean(data.has_more));
+    } catch (err) {
+      setItemsError(err.message || 'Gagal memuat item');
+    } finally {
+      setItemsBusy(false);
+    }
+  }
+
+  return (
+    <article className="overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full px-3 py-2.5 text-left transition hover:bg-bg-surface-hover"
+      >
+        {/* Baris atas: No Faktur + badge */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <ChevronDown
+              className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform ${
+                expanded ? 'rotate-0' : '-rotate-90'
+              }`}
+            />
+            <h3 className="truncate text-[13px] font-semibold leading-none text-text-primary">
+              {faktur.no_faktur}
+            </h3>
+          </div>
+          <BayarBadge jenis={faktur.jenis_bayar} />
+        </div>
+
+        {/* Baris tengah: Supplier, Tanggal */}
+        <div className="mt-1.5 pl-5 text-[11px] leading-snug text-text-secondary">
+          <p className="truncate">{faktur.nama_supplier || '—'}</p>
+          <p className="mt-0.5 text-text-muted">
+            {formatTanggal(faktur.tanggal_faktur)}
+          </p>
+        </div>
+
+        {/* Baris bawah: Total + jumlah item */}
+        <div className="mt-1.5 flex items-end justify-between gap-2 pl-5">
+          <p className="text-[11px] text-text-muted">
+            {formatNumber(faktur.jumlah_item ?? 0)} item
+          </p>
+          <p className="shrink-0 text-[13px] font-medium leading-none text-accent-yellow">
+            {formatRupiah(faktur.total_transaksi)}
+          </p>
+        </div>
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-border-subtle bg-bg-base px-3 py-2">
+          {itemsBusy && !items ? (
+            <div className="flex justify-center py-3">
+              <SubmitSpinner className="h-4 w-4" />
+            </div>
+          ) : null}
+          {itemsError ? (
+            <p className="py-2 text-[12px] text-state-error">{itemsError}</p>
+          ) : null}
+          {items?.length === 0 ? (
+            <p className="py-2 text-[12px] text-text-muted">Tidak ada item</p>
+          ) : null}
+          {items?.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] text-left text-[11px]">
+                <thead className="text-text-secondary">
+                  <tr>
+                    <th className="pb-1.5 pr-2 font-medium">Obat</th>
+                    <th className="pb-1.5 pr-2 font-medium">Sat</th>
+                    <th className="pb-1.5 pr-2 font-medium text-right">Harga</th>
+                    <th className="pb-1.5 pr-2 font-medium text-right">Qty</th>
+                    <th className="pb-1.5 font-medium text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it) => (
+                    <tr
+                      key={it.id}
+                      className="border-t border-border-subtle/50 align-top"
+                    >
+                      <td className="py-1.5 pr-2 text-text-primary">
+                        <div className="font-medium leading-snug">
+                          {it.nama_obat || it.kode_obat}
+                        </div>
+                        <div className="text-[10px] text-text-muted">
+                          {it.kode_obat}
+                          {it.no_batch ? ` · ${it.no_batch}` : ''}
+                        </div>
+                      </td>
+                      <td className="py-1.5 pr-2 text-text-secondary">
+                        {it.satuan || '—'}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                        {formatNumber(it.harga)}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                        {formatNumber(it.jumlah)}
+                      </td>
+                      <td className="py-1.5 text-right font-semibold text-text-primary">
+                        {formatNumber(it.total)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {itemsHasMore ? (
+            <button
+              type="button"
+              onClick={loadMoreItems}
+              disabled={itemsBusy}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-1.5 text-[12px] font-medium text-text-primary disabled:opacity-50"
+            >
+              {itemsBusy ? <SubmitSpinner className="h-3.5 w-3.5" /> : null}
+              Muat lagi
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+export default function PembelianPage() {
+  const { hasAccess } = useAuth();
+  const canTambah = hasAccess('pembelian', 'tambah');
+
+  const [tab, setTab] = useState('riwayat'); // riwayat | belum_dibayar
+  const [items, setItems] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [q, setQ] = useState('');
+  const [qApplied, setQApplied] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef(null);
+  const menuRef = useRef(null);
+
+  const showToast = useCallback((message) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 4500);
+  }, []);
+
+  const loadPage = useCallback(
+    async ({ offset = 0, append = false, query = qApplied } = {}) => {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+      try {
+        const data = await listPembelianFaktur({
+          limit: PAGE_SIZE,
+          offset,
+          q: query,
+        });
+        const next = data.items || [];
+        setItems((prev) => (append ? [...prev, ...next] : next));
+        setHasMore(Boolean(data.has_more));
+      } catch (err) {
+        showToast(err.message || 'Gagal memuat pembelian');
+        if (!append) {
+          setItems([]);
+          setHasMore(false);
+        }
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [qApplied, showToast]
+  );
+
+  useEffect(() => {
+    if (tab !== 'riwayat') return;
+    loadPage({ offset: 0, append: false });
+  }, [tab, loadPage]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function onDoc(e) {
+      if (!menuRef.current?.contains(e.target)) setMenuOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  function handleSearch(e) {
+    e.preventDefault();
+    setExpandedId(null);
+    setQApplied(q.trim());
+  }
+
+  function handleUploadSuccess() {
+    setExpandedId(null);
+    if (tab === 'riwayat') {
+      loadPage({ offset: 0, append: false });
+    }
+  }
+
+  const tabBtn = (id, label, badge = null) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => setTab(id)}
+      className={`inline-flex flex-1 items-center justify-center gap-1 rounded-[4px] px-2 py-1.5 text-[12px] font-medium ${
+        tab === id
+          ? 'bg-accent-navy text-white'
+          : 'text-text-secondary hover:bg-bg-surface-hover'
+      }`}
+    >
+      {label}
+      {badge}
+    </button>
+  );
+
+  return (
+    <AppShell
+      title="Pembelian"
+      navLoading={loading && tab === 'riwayat'}
+      actions={
+        canTambah ? (
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
+              aria-label="Menu pembelian"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[11rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setUploadOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
+                >
+                  <Upload className="h-3.5 w-3.5 text-accent-yellow" />
+                  Upload Pembelian
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null
+      }
+    >
+      <div className="space-y-3">
+        <div className="flex gap-1 rounded-[4px] border border-border-subtle bg-bg-surface p-0.5">
+          {tabBtn('riwayat', 'Riwayat')}
+          {tabBtn('belum_dibayar', 'Belum Dibayar')}
+        </div>
+
+        {tab === 'riwayat' && loading ? (
+          <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+            Memuat…
+          </div>
+        ) : null}
+
+        {!loading && tab === 'riwayat' ? (
+          <>
+            <form onSubmit={handleSearch} className="flex gap-1.5">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
+                <input
+                  type="search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Cari no faktur / supplier…"
+                  className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-2 pl-8 pr-3 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent-yellow focus:outline-none"
+                />
+              </div>
+              <button
+                type="submit"
+                className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover"
+              >
+                Cari
+              </button>
+            </form>
+
+            {items.length === 0 ? (
+              <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+                Belum ada data pembelian.
+                {canTambah
+                  ? ' Buka menu titik tiga → Upload Pembelian untuk mengunggah Excel Vmedis.'
+                  : ''}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-1.5">
+                {items.map((faktur) => (
+                  <FakturCard
+                    key={faktur.id}
+                    faktur={faktur}
+                    expanded={expandedId === faktur.id}
+                    onToggle={() =>
+                      setExpandedId((cur) =>
+                        cur === faktur.id ? null : faktur.id
+                      )
+                    }
+                  />
+                ))}
+                {hasMore ? (
+                  <button
+                    type="button"
+                    disabled={loadingMore}
+                    onClick={() =>
+                      loadPage({ offset: items.length, append: true })
+                    }
+                    className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+                  >
+                    {loadingMore ? (
+                      <SubmitSpinner className="h-4 w-4" />
+                    ) : null}
+                    Muat lagi
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </>
+        ) : null}
+
+        {tab === 'belum_dibayar' ? (
+          <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+            Modul pembayaran hutang belum tersedia
+          </div>
+        ) : null}
+      </div>
+
+      <PembelianUploadSheet
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onSuccess={handleUploadSuccess}
+        onToast={showToast}
+      />
+
+      <Toast message={toast} onClose={() => setToast('')} />
+    </AppShell>
+  );
+}

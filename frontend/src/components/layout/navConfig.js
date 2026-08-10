@@ -1,6 +1,7 @@
 import {
   Building2,
   LineChart,
+  Package,
   Pill,
   Plus,
   TrendingUp,
@@ -42,6 +43,15 @@ export const PRIMARY_NAV_ITEMS = [
     menuKode: 'penjualan',
     match: (pathname) => pathname.startsWith('/penjualan'),
     icon: TrendingUp,
+    type: 'link',
+  },
+  {
+    id: 'pembelian',
+    label: 'Pembelian',
+    to: '/pembelian',
+    menuKode: 'pembelian',
+    match: (pathname) => pathname.startsWith('/pembelian'),
+    icon: Package,
     type: 'link',
   },
   {
