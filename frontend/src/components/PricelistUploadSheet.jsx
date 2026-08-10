@@ -484,7 +484,7 @@ export default function PricelistUploadSheet({
           formatAngka={pdfFormatAngka}
           onBarisMulaiChange={setPdfBarisMulai}
           onFormatAngkaChange={setPdfFormatAngka}
-          onToast={toast}
+          onToast={onToast}
           onClose={() => {
             if (!busy) {
               setPdfMappingOpen(false);
@@ -506,6 +506,9 @@ export default function PricelistUploadSheet({
           onConfirm={handleConfirmSave}
           onRetry={handleRetryMapping}
           submitting={busy}
+          pbfId={parseResult.pbf_id || pbfId}
+          sessionId={parseResult.session_id}
+          onToast={onToast}
         />
       ) : null}
     </>

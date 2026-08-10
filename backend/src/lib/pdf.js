@@ -371,8 +371,10 @@ function normalizeKolomPosisi(raw) {
   return out;
 }
 
-function sampleFromItems(items, limit = 10) {
-  return items.slice(0, limit).map((item) => ({
+function sampleFromItems(items, limit = 10, offset = 0) {
+  const start = Math.max(0, Number(offset) || 0);
+  const size = Math.max(1, Number(limit) || 10);
+  return items.slice(start, start + size).map((item) => ({
     nama_barang: item.nama_barang,
     satuan: item.satuan,
     qty: item.qty,

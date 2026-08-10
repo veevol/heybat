@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { loadPricelistPreviewSampleRows } from '../api/pricelist';
 import SheetModal from './SheetModal';
 import SubmitSpinner from './SubmitSpinner';
+
+const PAGE_SIZE = 10;
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === '') return '—';
@@ -26,28 +29,63 @@ export default function UploadPreviewSheet({
   onConfirm,
   onRetry,
   submitting = false,
+  pbfId = null,
+  sessionId = null,
+  onToast = null,
 }) {
   const [localScale, setLocalScale] = useState(Boolean(scaleBy1000));
+  const [rows, setRows] = useState(() => sample || []);
+  const [loadMoreBusy, setLoadMoreBusy] = useState(false);
   const hasWarning = Boolean(warnings?.ada_peringatan);
+  const total = barisValid > 0 ? barisValid : rows.length;
+  const hasMore = total > rows.length;
+  const canLoadMore = Boolean(pbfId && sessionId && hasMore);
 
   useEffect(() => {
     setLocalScale(Boolean(scaleBy1000));
   }, [scaleBy1000]);
 
+  useEffect(() => {
+    setRows(sample || []);
+    // Reset sample saat sesi preview baru
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   const displaySample = useMemo(
     () =>
-      sample.map((row) => ({
+      rows.map((row) => ({
         ...row,
         qty: scaleValue(row.qty, localScale),
         harga_dasar: scaleValue(row.harga_dasar, localScale),
       })),
-    [sample, localScale]
+    [rows, localScale]
   );
 
   function handleToggle(event) {
     const next = event.target.checked;
     setLocalScale(next);
     onScaleBy1000Change?.(next);
+  }
+
+  async function handleLoadMore() {
+    if (!canLoadMore || loadMoreBusy || submitting) return;
+    setLoadMoreBusy(true);
+    try {
+      const data = await loadPricelistPreviewSampleRows({
+        pbfId,
+        sessionId,
+        offset: rows.length,
+        limit: PAGE_SIZE,
+      });
+      const next = data?.sample || [];
+      if (next.length) {
+        setRows((prev) => [...prev, ...next]);
+      }
+    } catch (err) {
+      onToast?.(err.message || 'Gagal memuat baris berikutnya');
+    } finally {
+      setLoadMoreBusy(false);
+    }
   }
 
   return (
@@ -209,9 +247,19 @@ export default function UploadPreviewSheet({
           </table>
         </div>
 
-        {displaySample.length > 0 && barisValid > displaySample.length ? (
+        {canLoadMore ? (
+          <button
+            type="button"
+            onClick={handleLoadMore}
+            disabled={loadMoreBusy || submitting}
+            className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[12px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+          >
+            {loadMoreBusy ? <SubmitSpinner className="h-3.5 w-3.5" /> : null}
+            Muat lagi ({displaySample.length} / {total})
+          </button>
+        ) : displaySample.length > 0 && total > displaySample.length ? (
           <p className="text-[10px] text-text-muted">
-            Menampilkan {displaySample.length} dari {barisValid} baris valid.
+            Menampilkan {displaySample.length} dari {total} baris valid.
           </p>
         ) : null}
 

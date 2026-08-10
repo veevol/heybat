@@ -663,6 +663,9 @@ export default function PricelistPbfPage() {
           onConfirm={handleConfirmSave}
           onRetry={handleRetryMapping}
           submitting={busy}
+          pbfId={parseResult.pbf_id || pbfId}
+          sessionId={parseResult.session_id}
+          onToast={showToast}
         />
       ) : null}
 

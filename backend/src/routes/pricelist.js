@@ -188,7 +188,8 @@ function buildPreviewSessionPayload({
     kind: 'preview',
     pbfId,
     mapping,
-    items: items.map(({ __flags, ...rest }) => rest),
+    // Simpan __flags agar sample/Muat lagi tetap bisa tampilkan badge digabung/estimasi
+    items,
     diuploadOleh,
     supplierInisial: supplier.inisial,
     scaleBy1000: false,
@@ -1081,6 +1082,51 @@ router.post('/parse-pdf-preview', requireMenuAksi('pricelist-pbf', 'tambah'), up
     return res.status(400).json({ error: err.message || 'Gagal memproses PDF' });
   }
 });
+
+// GET /api/pricelist/preview-sample-rows — halaman berikutnya untuk Preview Hasil Mapping
+router.get(
+  '/preview-sample-rows',
+  requireMenuAksi('pricelist-pbf', 'tambah'),
+  async (req, res) => {
+    try {
+      const pbfId = normalizeText(req.query?.pbf_id);
+      const sessionId = normalizeText(req.query?.session_id);
+      if (!pbfId || !sessionId) {
+        return res.status(400).json({ error: 'pbf_id dan session_id wajib' });
+      }
+
+      const session = getUploadSession(sessionId);
+      if (!session || session.kind !== 'preview' || session.pbfId !== pbfId) {
+        return res.status(410).json({
+          error: 'Sesi preview sudah habis atau tidak valid — upload ulang file',
+        });
+      }
+
+      const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
+      const limitRaw = parseInt(String(req.query.limit || '10'), 10);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.min(Math.max(1, limitRaw), 50)
+        : 10;
+      const items = Array.isArray(session.items) ? session.items : [];
+      const sample = sampleFromItems(items, limit, offset);
+
+      return res.json({
+        session_id: sessionId,
+        pbf_id: pbfId,
+        sample,
+        sample_total: items.length,
+        sample_offset: offset,
+        sample_limit: limit,
+        sample_has_more: offset + sample.length < items.length,
+      });
+    } catch (err) {
+      console.error('[GET /pricelist/preview-sample-rows]', err);
+      return res.status(500).json({
+        error: err.message || 'Gagal memuat baris preview',
+      });
+    }
+  }
+);
 
 // GET /api/pricelist/pdf-mapping-rows — halaman berikutnya untuk sheet mapping PDF
 router.get(
