@@ -189,16 +189,28 @@ function FakturCard({ faktur, expanded, onToggle }) {
           ) : null}
           {items?.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] text-left text-[11px]">
+              <table className="w-full text-left text-[11px]">
                 <thead className="text-text-secondary">
                   <tr>
                     <th className="pb-1.5 pr-2 font-medium">Nama Obat</th>
-                    <th className="pb-1.5 pr-2 font-medium">Satuan</th>
-                    <th className="pb-1.5 pr-2 font-medium text-right">Jumlah</th>
-                    <th className="pb-1.5 pr-2 font-medium text-right">Harga</th>
-                    <th className="pb-1.5 pr-2 font-medium text-right">Diskon</th>
-                    <th className="pb-1.5 pr-2 font-medium text-right">HPP</th>
-                    <th className="pb-1.5 font-medium text-right">Total</th>
+                    <th className="w-px whitespace-nowrap pb-1.5 pl-1.5 pr-1 font-medium">
+                      Satuan
+                    </th>
+                    <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
+                      Jumlah
+                    </th>
+                    <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
+                      Harga
+                    </th>
+                    <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
+                      Diskon
+                    </th>
+                    <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
+                      HPP
+                    </th>
+                    <th className="w-px whitespace-nowrap pb-1.5 pl-1 font-medium text-right">
+                      Total
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -211,33 +223,35 @@ function FakturCard({ faktur, expanded, onToggle }) {
                         <div className="font-medium leading-snug">
                           {it.nama_obat || it.kode_obat}
                         </div>
-                        {it.kode_obat ? (
-                          <div className="text-[10px] text-text-muted">
-                            {it.kode_obat}
-                          </div>
-                        ) : null}
                       </td>
-                      <td className="py-1.5 pr-2 text-text-secondary">
+                      <td className="whitespace-nowrap py-1.5 pl-1.5 pr-1 text-text-secondary">
                         {it.satuan || '—'}
                       </td>
-                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                      <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
                         {formatNumber(it.jumlah)}
                       </td>
-                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                      <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
                         {formatNumber(it.harga)}
                       </td>
-                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                      <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
                         {formatDiskon(it.diskon_1, it.diskon_2, it.diskon_3)}
                       </td>
-                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                      <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
                         {it.hpp === null ||
                         it.hpp === undefined ||
                         it.hpp === ''
                           ? '—'
                           : formatRupiah(it.hpp)}
                       </td>
-                      <td className="py-1.5 text-right font-semibold text-text-primary">
-                        {formatNumber(it.total)}
+                      <td className="whitespace-nowrap py-1.5 pl-1 text-right font-semibold text-text-primary">
+                        {(() => {
+                          const hpp = Number(it.hpp);
+                          const qty = Number(it.jumlah);
+                          if (!Number.isFinite(hpp) || !Number.isFinite(qty)) {
+                            return '—';
+                          }
+                          return formatRupiah(hpp * qty);
+                        })()}
                       </td>
                     </tr>
                   ))}
