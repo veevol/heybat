@@ -43,6 +43,16 @@ function formatTanggal(value) {
   }).format(d);
 }
 
+/** Gabung diskon_1/2/3: "10%", "10% + 5%", atau "-" */
+function formatDiskon(d1, d2, d3) {
+  const parts = [d1, d2, d3]
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => `${n}%`);
+  if (!parts.length) return '-';
+  return parts.join(' + ');
+}
+
 function BayarBadge({ jenis }) {
   const raw = String(jenis || '').toUpperCase();
   if (raw === 'TUNAI') {
@@ -179,13 +189,15 @@ function FakturCard({ faktur, expanded, onToggle }) {
           ) : null}
           {items?.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] text-left text-[11px]">
+              <table className="w-full min-w-[640px] text-left text-[11px]">
                 <thead className="text-text-secondary">
                   <tr>
-                    <th className="pb-1.5 pr-2 font-medium">Obat</th>
-                    <th className="pb-1.5 pr-2 font-medium">Sat</th>
+                    <th className="pb-1.5 pr-2 font-medium">Nama Obat</th>
+                    <th className="pb-1.5 pr-2 font-medium">Satuan</th>
+                    <th className="pb-1.5 pr-2 font-medium text-right">Jumlah</th>
                     <th className="pb-1.5 pr-2 font-medium text-right">Harga</th>
-                    <th className="pb-1.5 pr-2 font-medium text-right">Qty</th>
+                    <th className="pb-1.5 pr-2 font-medium text-right">Diskon</th>
+                    <th className="pb-1.5 pr-2 font-medium text-right">HPP</th>
                     <th className="pb-1.5 font-medium text-right">Total</th>
                   </tr>
                 </thead>
@@ -199,19 +211,30 @@ function FakturCard({ faktur, expanded, onToggle }) {
                         <div className="font-medium leading-snug">
                           {it.nama_obat || it.kode_obat}
                         </div>
-                        <div className="text-[10px] text-text-muted">
-                          {it.kode_obat}
-                          {it.no_batch ? ` · ${it.no_batch}` : ''}
-                        </div>
+                        {it.kode_obat ? (
+                          <div className="text-[10px] text-text-muted">
+                            {it.kode_obat}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="py-1.5 pr-2 text-text-secondary">
                         {it.satuan || '—'}
                       </td>
                       <td className="py-1.5 pr-2 text-right text-text-secondary">
+                        {formatNumber(it.jumlah)}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-text-secondary">
                         {formatNumber(it.harga)}
                       </td>
                       <td className="py-1.5 pr-2 text-right text-text-secondary">
-                        {formatNumber(it.jumlah)}
+                        {formatDiskon(it.diskon_1, it.diskon_2, it.diskon_3)}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-text-secondary">
+                        {it.hpp === null ||
+                        it.hpp === undefined ||
+                        it.hpp === ''
+                          ? '—'
+                          : formatRupiah(it.hpp)}
                       </td>
                       <td className="py-1.5 text-right font-semibold text-text-primary">
                         {formatNumber(it.total)}
