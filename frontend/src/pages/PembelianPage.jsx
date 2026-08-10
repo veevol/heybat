@@ -1,22 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ChevronDown,
   MoreVertical,
+  Pencil,
+  Plus,
   Search,
+  Trash2,
   Upload,
   Wallet,
 } from 'lucide-react';
 import {
+  listFakturHutang,
+  listPembayaranFaktur,
   listPembelianFaktur,
   listPembelianFakturItems,
+  tambahPembayaran,
+  editPembayaran,
+  hapusPembayaran,
 } from '../api/pembelian';
 import AppShell from '../components/layout/AppShell';
+import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
+import PembayaranFormSheet from '../components/PembayaranFormSheet';
 import PembelianUploadSheet from '../components/PembelianUploadSheet';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 
 const PAGE_SIZE = 20;
+
+const HUTANG_STATUS_FILTERS = [
+  { id: 'semua', label: 'Semua' },
+  { id: 'belum_bayar', label: 'Belum Bayar' },
+  { id: 'cicilan', label: 'Cicilan' },
+  { id: 'lunas', label: 'Lunas' },
+];
 
 function formatRupiah(value) {
   const num = Number(value);
@@ -33,6 +49,14 @@ function formatNumber(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   return new Intl.NumberFormat('id-ID').format(num);
+}
+
+/** Angka dibulatkan ke bilangan bulat terdekat (harga / HPP / total) */
+function formatRounded(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return new Intl.NumberFormat('id-ID').format(Math.round(num));
 }
 
 function formatTanggal(value) {
@@ -146,31 +170,26 @@ function FakturCard({ faktur, expanded, onToggle }) {
         onClick={onToggle}
         className="w-full px-3 py-2.5 text-left transition hover:bg-bg-surface-hover"
       >
-        {/* Baris atas: No Faktur + badge */}
+        {/* Baris atas: Nama PBF + badge */}
         <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <ChevronDown
-              className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform ${
-                expanded ? 'rotate-0' : '-rotate-90'
-              }`}
-            />
-            <h3 className="truncate text-[13px] font-semibold leading-none text-text-primary">
-              {faktur.no_faktur}
-            </h3>
-          </div>
+          <h3 className="min-w-0 truncate text-[13px] font-semibold leading-none text-text-primary">
+            {faktur.nama_supplier || '—'}
+          </h3>
           <BayarBadge jenis={faktur.jenis_bayar} />
         </div>
 
-        {/* Baris tengah: Supplier, Tanggal */}
-        <div className="mt-1.5 pl-5 text-[11px] leading-snug text-text-secondary">
-          <p className="truncate">{faktur.nama_supplier || '—'}</p>
-          <p className="mt-0.5 text-text-muted">
+        {/* Baris tengah: No Faktur kiri, Tanggal kanan */}
+        <div className="mt-1.5 flex items-start justify-between gap-2 text-[11px] leading-snug">
+          <p className="min-w-0 truncate text-text-secondary">
+            {faktur.no_faktur || '—'}
+          </p>
+          <p className="shrink-0 whitespace-nowrap text-text-secondary">
             {formatTanggal(faktur.tanggal_faktur)}
           </p>
         </div>
 
         {/* Baris bawah: Total + jumlah item */}
-        <div className="mt-1.5 flex items-end justify-between gap-2 pl-5">
+        <div className="mt-1.5 flex items-end justify-between gap-2">
           <p className="text-[11px] text-text-muted">
             {formatNumber(faktur.jumlah_item ?? 0)} item
           </p>
@@ -198,24 +217,24 @@ function FakturCard({ faktur, expanded, onToggle }) {
               <table className="w-full text-left text-[11px]">
                 <thead className="text-text-secondary">
                   <tr>
-                    <th className="pb-1.5 pr-2 font-medium">Nama Obat</th>
+                    <th className="pb-1.5 pr-2 font-medium">NAMA OBAT</th>
                     <th className="w-px whitespace-nowrap pb-1.5 pl-1.5 pr-1 font-medium">
-                      Satuan
+                      SAT
                     </th>
                     <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
-                      Jumlah
+                      JML
                     </th>
                     <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
-                      Harga
+                      HARGA
                     </th>
-                    <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
-                      Diskon
+                    <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-center">
+                      DISK
                     </th>
                     <th className="w-px whitespace-nowrap pb-1.5 px-1 font-medium text-right">
                       HPP
                     </th>
                     <th className="w-px whitespace-nowrap pb-1.5 pl-1 font-medium text-right">
-                      Total
+                      TOTAL
                     </th>
                   </tr>
                 </thead>
@@ -237,9 +256,9 @@ function FakturCard({ faktur, expanded, onToggle }) {
                         {formatNumber(it.jumlah)}
                       </td>
                       <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
-                        {formatNumber(it.harga)}
+                        {formatRounded(it.harga)}
                       </td>
-                      <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
+                      <td className="whitespace-nowrap py-1.5 px-1 text-center text-text-secondary">
                         {formatDiskon(it.diskon_1, it.diskon_2, it.diskon_3)}
                       </td>
                       <td className="whitespace-nowrap py-1.5 px-1 text-right text-text-secondary">
@@ -247,7 +266,7 @@ function FakturCard({ faktur, expanded, onToggle }) {
                         it.hpp === undefined ||
                         it.hpp === ''
                           ? '—'
-                          : formatRupiah(it.hpp)}
+                          : formatRounded(it.hpp)}
                       </td>
                       <td className="whitespace-nowrap py-1.5 pl-1 text-right font-semibold text-text-primary">
                         {(() => {
@@ -256,7 +275,7 @@ function FakturCard({ faktur, expanded, onToggle }) {
                           if (!Number.isFinite(hpp) || !Number.isFinite(qty)) {
                             return '—';
                           }
-                          return formatRupiah(hpp * qty);
+                          return formatRounded(hpp * qty);
                         })()}
                       </td>
                     </tr>
@@ -282,9 +301,194 @@ function FakturCard({ faktur, expanded, onToggle }) {
   );
 }
 
+function HutangStatusBadge({ status }) {
+  const raw = String(status || '').toLowerCase();
+  if (raw === 'lunas') {
+    return (
+      <span className="inline-flex rounded-[4px] bg-state-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-success">
+        Lunas
+      </span>
+    );
+  }
+  if (raw === 'cicilan') {
+    return (
+      <span className="inline-flex rounded-[4px] bg-state-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-warning">
+        Cicilan
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex rounded-[4px] bg-state-error/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-error">
+      Belum Bayar
+    </span>
+  );
+}
+
+function HutangCard({
+  faktur,
+  expanded,
+  onToggle,
+  canTambah,
+  canEdit,
+  canHapus,
+  onTambah,
+  onEdit,
+  onHapus,
+}) {
+  const [payments, setPayments] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const loadedForId = useRef(null);
+
+  const reload = useCallback(async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const data = await listPembayaranFaktur(faktur.id);
+      setPayments(data.items || []);
+      loadedForId.current = faktur.id;
+    } catch (err) {
+      setError(err.message || 'Gagal memuat pembayaran');
+      setPayments(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [faktur.id]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    if (loadedForId.current === faktur.id && payments) return;
+    reload();
+  }, [expanded, faktur.id, payments, reload]);
+
+  return (
+    <article className="overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full px-3 py-2.5 text-left transition hover:bg-bg-surface-hover"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="min-w-0 truncate text-[13px] font-semibold leading-none text-text-primary">
+            {faktur.nama_supplier || '—'}
+          </h3>
+          <HutangStatusBadge status={faktur.status} />
+        </div>
+        <div className="mt-1.5 flex items-start justify-between gap-2 text-[11px] leading-snug">
+          <p className="min-w-0 truncate text-text-secondary">
+            {faktur.no_faktur || '—'}
+          </p>
+          <p className="shrink-0 whitespace-nowrap text-text-secondary">
+            {formatTanggal(faktur.tanggal_faktur)}
+          </p>
+        </div>
+        <div className="mt-1 flex items-start justify-between gap-2 text-[11px] leading-snug text-text-muted">
+          <span>Jatuh tempo {formatTanggal(faktur.jatuh_tempo)}</span>
+          <span>Total {formatRupiah(faktur.total_transaksi)}</span>
+        </div>
+        <div className="mt-1.5 flex items-end justify-between gap-2">
+          <p className="text-[11px] text-text-muted">Sisa hutang</p>
+          <p className="shrink-0 text-[13px] font-medium leading-none text-accent-yellow">
+            {formatRupiah(faktur.sisa_hutang)}
+          </p>
+        </div>
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-border-subtle bg-bg-base px-3 py-2">
+          {busy && !payments ? (
+            <div className="flex justify-center py-3">
+              <SubmitSpinner className="h-4 w-4" />
+            </div>
+          ) : null}
+          {error ? (
+            <p className="py-2 text-[12px] text-state-error">{error}</p>
+          ) : null}
+          {payments?.length === 0 ? (
+            <p className="py-2 text-[12px] text-text-muted">
+              Belum ada pembayaran
+            </p>
+          ) : null}
+          {payments?.length > 0 ? (
+            <ul className="space-y-1.5">
+              {payments.map((p) => (
+                <li
+                  key={p.id}
+                  className="rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[12px] font-semibold text-text-primary">
+                          {formatRupiah(p.nominal)}
+                        </span>
+                        {p.ditandai_lunas_manual ? (
+                          <span className="rounded-[4px] bg-state-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-success">
+                            Lunas manual
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-text-secondary">
+                        {formatTanggal(p.tanggal_bayar)}
+                        {p.metode_bayar ? ` · ${p.metode_bayar}` : ''}
+                      </p>
+                      {p.catatan ? (
+                        <p className="mt-0.5 text-[11px] text-text-muted">
+                          {p.catatan}
+                        </p>
+                      ) : null}
+                    </div>
+                    {canEdit || canHapus ? (
+                      <div className="flex shrink-0 gap-0.5">
+                        {canEdit ? (
+                          <button
+                            type="button"
+                            onClick={() => onEdit?.(p)}
+                            className="rounded-[4px] p-1.5 text-text-secondary hover:bg-bg-surface-hover hover:text-text-primary"
+                            aria-label="Edit pembayaran"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+                        {canHapus ? (
+                          <button
+                            type="button"
+                            onClick={() => onHapus?.(p)}
+                            className="rounded-[4px] p-1.5 text-state-error hover:bg-state-error/10"
+                            aria-label="Hapus pembayaran"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {canTambah ? (
+            <button
+              type="button"
+              onClick={() => onTambah?.(faktur)}
+              className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[12px] font-medium text-text-primary hover:bg-bg-surface-hover"
+            >
+              <Plus className="h-3.5 w-3.5 text-accent-yellow" />
+              Tambah Pembayaran
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 export default function PembelianPage() {
   const { hasAccess } = useAuth();
   const canTambah = hasAccess('pembelian', 'tambah');
+  const canEdit = hasAccess('pembelian', 'edit');
+  const canHapus = hasAccess('pembelian', 'hapus');
 
   const [view, setView] = useState('riwayat'); // riwayat | belum_dibayar
   const [items, setItems] = useState([]);
@@ -300,6 +504,21 @@ export default function PembelianPage() {
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
   const menuRef = useRef(null);
+
+  // Belum Dibayar (hutang)
+  const [hutangItems, setHutangItems] = useState([]);
+  const [hutangHasMore, setHutangHasMore] = useState(false);
+  const [hutangLoading, setHutangLoading] = useState(false);
+  const [hutangLoadingMore, setHutangLoadingMore] = useState(false);
+  const [hutangStatus, setHutangStatus] = useState('semua');
+  const [hutangExpandedId, setHutangExpandedId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState('tambah');
+  const [formFaktur, setFormFaktur] = useState(null);
+  const [formInitial, setFormInitial] = useState(null);
+  const [formBusy, setFormBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -341,11 +560,44 @@ export default function PembelianPage() {
     [debouncedQ, showToast]
   );
 
+  const loadHutangPage = useCallback(
+    async ({ offset = 0, append = false, status = hutangStatus } = {}) => {
+      if (append) setHutangLoadingMore(true);
+      else setHutangLoading(true);
+      try {
+        const data = await listFakturHutang({
+          limit: PAGE_SIZE,
+          offset,
+          status,
+        });
+        const next = data.items || [];
+        setHutangItems((prev) => (append ? [...prev, ...next] : next));
+        setHutangHasMore(Boolean(data.has_more));
+      } catch (err) {
+        showToast(err.message || 'Gagal memuat faktur hutang');
+        if (!append) {
+          setHutangItems([]);
+          setHutangHasMore(false);
+        }
+      } finally {
+        setHutangLoading(false);
+        setHutangLoadingMore(false);
+      }
+    },
+    [hutangStatus, showToast]
+  );
+
   useEffect(() => {
     if (view !== 'riwayat') return;
     setExpandedId(null);
     loadPage({ offset: 0, append: false });
   }, [view, loadPage]);
+
+  useEffect(() => {
+    if (view !== 'belum_dibayar') return;
+    setHutangExpandedId(null);
+    loadHutangPage({ offset: 0, append: false });
+  }, [view, loadHutangPage]);
 
   useEffect(() => {
     return () => {
@@ -375,10 +627,64 @@ export default function PembelianPage() {
     loadPage({ offset: 0, append: false });
   }
 
+  function openTambahPembayaran(faktur) {
+    setFormMode('tambah');
+    setFormFaktur(faktur);
+    setFormInitial(null);
+    setFormOpen(true);
+  }
+
+  function openEditPembayaran(faktur, payment) {
+    setFormMode('edit');
+    setFormFaktur(faktur);
+    setFormInitial(payment);
+    setFormOpen(true);
+  }
+
+  async function handleFormSubmit(body) {
+    if (!formFaktur || formBusy) return;
+    setFormBusy(true);
+    try {
+      if (formMode === 'edit' && formInitial?.id) {
+        await editPembayaran(formInitial.id, body);
+        showToast('Pembayaran diperbarui');
+      } else {
+        await tambahPembayaran(formFaktur.id, body);
+        showToast('Pembayaran ditambahkan');
+      }
+      setFormOpen(false);
+      setFormInitial(null);
+      await loadHutangPage({ offset: 0, append: false });
+    } catch (err) {
+      showToast(err.message || 'Gagal menyimpan pembayaran');
+    } finally {
+      setFormBusy(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await hapusPembayaran(deleteTarget.id);
+      showToast('Pembayaran dihapus');
+      setDeleteTarget(null);
+      await loadHutangPage({ offset: 0, append: false });
+    } catch (err) {
+      showToast(err.message || 'Gagal menghapus pembayaran');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const navLoading =
+    (view === 'riwayat' && loading) ||
+    (view === 'belum_dibayar' && hutangLoading);
+
   return (
     <AppShell
       title="Pembelian"
-      navLoading={loading && view === 'riwayat'}
+      navLoading={navLoading}
       actions={
         <div className="relative" ref={menuRef}>
           <button
@@ -508,9 +814,78 @@ export default function PembelianPage() {
           </div>
         </>
       ) : (
-        <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-          Modul pembayaran hutang belum tersedia
-        </div>
+        <>
+          <div className="sticky top-12 z-20 -mx-3 mb-3 bg-bg-surface/80 px-3 pb-2 pt-1 backdrop-blur-md">
+            <div className="flex gap-1 overflow-x-auto rounded-[4px] border border-border-subtle bg-bg-surface p-0.5">
+              {HUTANG_STATUS_FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setHutangStatus(f.id)}
+                  className={`shrink-0 rounded-[4px] px-2.5 py-1.5 text-[12px] font-medium ${
+                    hutangStatus === f.id
+                      ? 'bg-accent-navy text-white'
+                      : 'text-text-secondary hover:bg-bg-surface-hover'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {hutangLoading ? (
+              <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+                Memuat…
+              </div>
+            ) : hutangItems.length === 0 ? (
+              <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+                Tidak ada faktur hutang
+                {hutangStatus !== 'semua' ? ' untuk filter ini' : ''}.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-1.5">
+                {hutangItems.map((faktur) => (
+                  <HutangCard
+                    key={`${faktur.id}-${faktur.status}-${faktur.sisa_hutang}-${faktur.jumlah_pembayaran}`}
+                    faktur={faktur}
+                    expanded={hutangExpandedId === faktur.id}
+                    onToggle={() =>
+                      setHutangExpandedId((cur) =>
+                        cur === faktur.id ? null : faktur.id
+                      )
+                    }
+                    canTambah={canTambah}
+                    canEdit={canEdit}
+                    canHapus={canHapus}
+                    onTambah={openTambahPembayaran}
+                    onEdit={(p) => openEditPembayaran(faktur, p)}
+                    onHapus={(p) => setDeleteTarget(p)}
+                  />
+                ))}
+                {hutangHasMore ? (
+                  <button
+                    type="button"
+                    disabled={hutangLoadingMore}
+                    onClick={() =>
+                      loadHutangPage({
+                        offset: hutangItems.length,
+                        append: true,
+                      })
+                    }
+                    className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+                  >
+                    {hutangLoadingMore ? (
+                      <SubmitSpinner className="h-4 w-4" />
+                    ) : null}
+                    Muat lagi
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       <PembelianUploadSheet
@@ -519,6 +894,38 @@ export default function PembelianPage() {
         onSuccess={handleUploadSuccess}
         onToast={showToast}
       />
+
+      <PembayaranFormSheet
+        open={formOpen}
+        mode={formMode}
+        initial={formInitial}
+        fakturLabel={
+          formFaktur
+            ? `${formFaktur.no_faktur || ''} · ${formFaktur.nama_supplier || ''}`
+            : ''
+        }
+        submitting={formBusy}
+        onClose={() => {
+          if (!formBusy) {
+            setFormOpen(false);
+            setFormInitial(null);
+          }
+        }}
+        onSubmit={handleFormSubmit}
+      />
+
+      {deleteTarget ? (
+        <ConfirmDeleteModal
+          confirmName={formatRupiah(deleteTarget.nominal)}
+          title="Hapus Pembayaran"
+          entityLabel="nominal"
+          submitting={deleting}
+          onClose={() => {
+            if (!deleting) setDeleteTarget(null);
+          }}
+          onConfirm={handleConfirmDelete}
+        />
+      ) : null}
 
       <Toast message={toast} onClose={() => setToast('')} />
     </AppShell>

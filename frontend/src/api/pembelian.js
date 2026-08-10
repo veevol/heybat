@@ -47,3 +47,60 @@ export async function listPembelianFakturItems(
     apiUrl(`/api/pembelian/faktur/${encodeURIComponent(fakturId)}/items?${qs}`)
   );
 }
+
+/** List faktur HUTANG + sisa/status (paginated) */
+export async function listFakturHutang({
+  limit = 20,
+  offset = 0,
+  status = 'semua',
+  q = '',
+} = {}) {
+  const qs = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    status: String(status || 'semua'),
+  });
+  if (q) qs.set('q', q);
+  return apiJson(apiUrl(`/api/pembelian/faktur-hutang?${qs.toString()}`));
+}
+
+/** Riwayat pembayaran 1 faktur */
+export async function listPembayaranFaktur(fakturId) {
+  return apiJson(
+    apiUrl(
+      `/api/pembelian/faktur-hutang/${encodeURIComponent(fakturId)}/pembayaran`
+    )
+  );
+}
+
+/** Tambah pembayaran */
+export async function tambahPembayaran(fakturId, body) {
+  return apiJson(
+    apiUrl(
+      `/api/pembelian/faktur-hutang/${encodeURIComponent(fakturId)}/pembayaran`
+    ),
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+/** Edit pembayaran */
+export async function editPembayaran(pembayaranId, body) {
+  return apiJson(
+    apiUrl(`/api/pembelian/pembayaran/${encodeURIComponent(pembayaranId)}`),
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+/** Hapus pembayaran */
+export async function hapusPembayaran(pembayaranId) {
+  return apiJson(
+    apiUrl(`/api/pembelian/pembayaran/${encodeURIComponent(pembayaranId)}`),
+    { method: 'DELETE' }
+  );
+}
