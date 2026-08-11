@@ -5,7 +5,6 @@ import {
   Search,
   Trash2,
   Upload,
-  Wallet,
 } from 'lucide-react';
 import {
   getRencanaBayar,
@@ -31,6 +30,7 @@ import { useAuth } from '../context/AuthContext';
 const PAGE_SIZE = 20;
 
 const HUTANG_STATUS_FILTERS = [
+  { id: 'riwayat', label: 'Riwayat' },
   { id: 'semua', label: 'Semua' },
   { id: 'belum_bayar', label: 'Belum Bayar' },
   { id: 'rencana_bayar', label: 'Jadwal Bayar' },
@@ -74,6 +74,29 @@ function formatTanggal(value) {
     year: 'numeric',
     timeZone: 'Asia/Jakarta',
   }).format(d);
+}
+
+/** Usia faktur dalam hari sejak tanggal_faktur (Asia/Jakarta) */
+function formatUsiaFakturHari(tanggalFaktur) {
+  if (!tanggalFaktur) return null;
+  const raw = String(tanggalFaktur);
+  const start =
+    raw.length <= 10
+      ? new Date(`${raw.slice(0, 10)}T00:00:00+07:00`)
+      : new Date(raw);
+  if (Number.isNaN(start.getTime())) return null;
+
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const today = new Date(`${todayStr}T00:00:00+07:00`);
+  const diffDays = Math.round((today.getTime() - start.getTime()) / 86400000);
+
+  if (!Number.isFinite(diffDays) || diffDays < 0) return '0 D';
+  return `${diffDays} D`;
 }
 
 /** Gabung diskon_1/2/3: "10%", "10% + 5%", atau "-" */
@@ -372,6 +395,8 @@ function HutangCard({
     reload();
   }, [expanded, faktur.id, payments, reload]);
 
+  const usiaFaktur = formatUsiaFakturHari(faktur.tanggal_faktur);
+
   return (
     <article
       className={`overflow-hidden rounded-[4px] border bg-bg-surface ${
@@ -398,27 +423,28 @@ function HutangCard({
             selectable ? 'pr-3 pl-0' : 'px-3'
           }`}
         >
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="min-w-0 truncate text-[13px] font-semibold leading-none text-text-primary">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-1">
+            <h3 className="min-w-0 truncate text-[13px] font-semibold leading-snug text-text-primary">
               {faktur.nama_supplier || '—'}
             </h3>
-            <HutangStatusBadge status={faktur.status} />
-          </div>
-          <div className="mt-1.5 flex items-start justify-between gap-2 text-[11px] leading-snug">
-            <p className="min-w-0 truncate text-text-secondary">
-              {faktur.no_faktur || '—'}
-            </p>
-            <p className="shrink-0 whitespace-nowrap text-text-secondary">
+            <div className="flex shrink-0 items-center justify-end gap-1.5">
+              {usiaFaktur ? (
+                <span className="whitespace-nowrap text-[11px] text-text-muted">
+                  {usiaFaktur}
+                </span>
+              ) : null}
+              <HutangStatusBadge status={faktur.status} />
+            </div>
+            <p className="min-w-0 truncate text-[11px] leading-snug text-text-secondary">
               {formatTanggal(faktur.tanggal_faktur)}
             </p>
-          </div>
-          <div className="mt-1 flex items-start justify-between gap-2 text-[11px] leading-snug text-text-muted">
-            <span>Jatuh tempo {formatTanggal(faktur.jatuh_tempo)}</span>
-            <span>Total {formatRupiah(faktur.total_transaksi)}</span>
-          </div>
-          <div className="mt-1.5 flex items-end justify-between gap-2">
-            <p className="text-[11px] text-text-muted">Sisa hutang</p>
-            <p className="shrink-0 text-[13px] font-medium leading-none text-accent-yellow">
+            <p className="shrink-0 text-right text-[11px] font-semibold tabular-nums leading-snug text-text-primary">
+              {formatRupiah(faktur.total_transaksi)}
+            </p>
+            <p className="min-w-0 truncate text-[11px] leading-snug text-text-secondary">
+              {faktur.no_faktur || '—'}
+            </p>
+            <p className="shrink-0 text-right text-[13px] font-semibold tabular-nums leading-snug text-accent-yellow">
               {formatRupiah(faktur.sisa_hutang)}
             </p>
           </div>
@@ -510,7 +536,6 @@ export default function PembelianPage() {
   const canEdit = hasAccess('pembelian', 'edit');
   const canHapus = hasAccess('pembelian', 'hapus');
 
-  const [view, setView] = useState('riwayat'); // riwayat | belum_dibayar
   const [items, setItems] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -525,12 +550,12 @@ export default function PembelianPage() {
   const toastTimer = useRef(null);
   const menuRef = useRef(null);
 
-  // Belum Dibayar (hutang)
+  // Hutang / filter tab (riwayat | semua | belum_bayar | rencana_bayar | lunas)
   const [hutangItems, setHutangItems] = useState([]);
   const [hutangHasMore, setHutangHasMore] = useState(false);
   const [hutangLoading, setHutangLoading] = useState(false);
   const [hutangLoadingMore, setHutangLoadingMore] = useState(false);
-  const [hutangStatus, setHutangStatus] = useState('semua');
+  const [hutangStatus, setHutangStatus] = useState('riwayat');
   const [hutangExpandedId, setHutangExpandedId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState('tambah');
@@ -595,7 +620,7 @@ export default function PembelianPage() {
 
   const loadHutangPage = useCallback(
     async ({ offset = 0, append = false, status = hutangStatus } = {}) => {
-      if (status === 'rencana_bayar') {
+      if (status === 'rencana_bayar' || status === 'riwayat') {
         setHutangLoading(false);
         setHutangLoadingMore(false);
         return;
@@ -649,23 +674,21 @@ export default function PembelianPage() {
   );
 
   useEffect(() => {
-    if (view !== 'riwayat') return;
+    if (hutangStatus !== 'riwayat') return;
     setExpandedId(null);
+    setSelectedIds(new Set());
     loadPage({ offset: 0, append: false });
-  }, [view, loadPage]);
+  }, [hutangStatus, loadPage]);
 
   useEffect(() => {
-    if (view !== 'belum_dibayar') {
+    if (hutangStatus === 'riwayat') return;
+    setHutangExpandedId(null);
+    if (hutangStatus === 'rencana_bayar') {
       setSelectedIds(new Set());
       return;
     }
-    setHutangExpandedId(null);
-    if (hutangStatus !== 'rencana_bayar') {
-      loadHutangPage({ offset: 0, append: false });
-    } else {
-      setSelectedIds(new Set());
-    }
-  }, [view, loadHutangPage, hutangStatus]);
+    loadHutangPage({ offset: 0, append: false });
+  }, [loadHutangPage, hutangStatus]);
 
   useEffect(() => {
     return () => {
@@ -691,7 +714,7 @@ export default function PembelianPage() {
 
   function handleUploadSuccess() {
     setExpandedId(null);
-    setView('riwayat');
+    setHutangStatus('riwayat');
     loadPage({ offset: 0, append: false });
   }
 
@@ -815,8 +838,8 @@ export default function PembelianPage() {
   }
 
   const navLoading =
-    (view === 'riwayat' && loading) ||
-    (view === 'belum_dibayar' &&
+    (hutangStatus === 'riwayat' && loading) ||
+    (hutangStatus !== 'riwayat' &&
       hutangStatus !== 'rencana_bayar' &&
       hutangLoading);
 
@@ -825,23 +848,23 @@ export default function PembelianPage() {
       title="Pembelian"
       navLoading={navLoading}
       actions={
-        <div className="relative" ref={menuRef}>
-          <button
-            type="button"
-            onClick={() => setMenuOpen((v) => !v)}
-            className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
-            aria-label="Menu pembelian"
-            aria-expanded={menuOpen}
-            aria-haspopup="menu"
-          >
-            <MoreVertical className="h-5 w-5" />
-          </button>
-          {menuOpen ? (
-            <div
-              role="menu"
-              className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[12rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
+        canTambah ? (
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-[4px] text-text-secondary transition hover:bg-bg-surface-hover hover:text-text-primary"
+              aria-label="Menu pembelian"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
             >
-              {canTambah ? (
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-[calc(100%+4px)] z-50 min-w-[12rem] overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface shadow-lg shadow-black/40"
+              >
                 <button
                   type="button"
                   role="menuitem"
@@ -854,257 +877,223 @@ export default function PembelianPage() {
                   <Upload className="h-3.5 w-3.5 text-accent-yellow" />
                   Upload Pembelian
                 </button>
-              ) : null}
-              {view !== 'riwayat' ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setView('riwayat');
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
-                >
-                  Riwayat Faktur
-                </button>
-              ) : null}
-              {view !== 'belum_dibayar' ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setView('belum_dibayar');
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-medium text-text-primary transition hover:bg-bg-surface-hover"
-                >
-                  <Wallet className="h-3.5 w-3.5 text-accent-yellow" />
-                  Belum Dibayar
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null
       }
     >
-      {view === 'riwayat' ? (
-        <>
-          <div className="sticky top-12 z-20 -mx-3 mb-3 space-y-2 bg-bg-surface/80 px-3 pb-2 pt-1 backdrop-blur-md">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Cari faktur, supplier, atau nama obat…"
-                className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-1.5 pl-10 pr-9 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow"
-              />
-              {searchLoading || (loading && Boolean(query.trim())) ? (
-                <SubmitSpinner className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-accent-yellow" />
+      <div className="sticky top-12 z-20 -mx-3 mb-3 space-y-2 bg-bg-surface/80 px-3 pb-2 pt-1 backdrop-blur-md">
+        <div className="flex gap-1 overflow-x-auto rounded-[4px] border border-border-subtle bg-bg-surface p-0.5">
+          {HUTANG_STATUS_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => {
+                setHutangStatus(f.id);
+                if (f.id === 'rencana_bayar') {
+                  setRencanaPanelKey((k) => k + 1);
+                }
+              }}
+              className={`shrink-0 rounded-[4px] px-2.5 py-1.5 text-[12px] font-medium ${
+                hutangStatus === f.id
+                  ? 'bg-accent-navy text-white'
+                  : 'text-text-secondary hover:bg-bg-surface-hover'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {hutangStatus === 'riwayat' ? (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Cari faktur, supplier, atau nama obat…"
+              className="w-full rounded-[4px] border border-border-subtle bg-bg-surface py-1.5 pl-10 pr-9 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent-yellow focus:ring-1 focus:ring-accent-yellow"
+            />
+            {searchLoading || (loading && Boolean(query.trim())) ? (
+              <SubmitSpinner className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-accent-yellow" />
+            ) : null}
+          </div>
+        ) : null}
+        {hutangStatus === 'rencana_bayar' ? (
+          <div className="flex items-center justify-between gap-3 px-0.5 py-1">
+            <p className="min-w-0 truncate text-[12px] text-text-secondary">
+              {rencanaSummary.jumlah_draft || 0} PBF,{' '}
+              {rencanaSummary.jumlah_faktur || 0} Faktur
+            </p>
+            <p className="shrink-0 text-[13px] font-semibold tabular-nums text-accent-yellow">
+              {formatRupiah(rencanaSummary.total)}
+            </p>
+          </div>
+        ) : hutangStatus === 'belum_bayar' ? (
+          <div className="flex items-center justify-between gap-3 px-0.5 py-1">
+            <p className="min-w-0 truncate text-[12px] text-text-secondary">
+              {hutangSummary.jumlah_pbf || 0} PBF,{' '}
+              {hutangSummary.jumlah_faktur || 0} Faktur
+            </p>
+            <p className="shrink-0 text-[13px] font-semibold tabular-nums text-accent-yellow">
+              {formatRupiah(hutangSummary.total_hutang)}
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      {hutangStatus === 'riwayat' ? (
+        <div className="space-y-3">
+          {loading ? (
+            <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+              Memuat…
+            </div>
+          ) : items.length === 0 ? (
+            <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+              {debouncedQ
+                ? 'Tidak ada faktur yang cocok.'
+                : 'Belum ada data pembelian.'}
+              {!debouncedQ && canTambah
+                ? ' Buka menu titik tiga → Upload Pembelian untuk mengunggah Excel Vmedis.'
+                : ''}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-1.5">
+              {items.map((faktur) => (
+                <FakturCard
+                  key={faktur.id}
+                  faktur={faktur}
+                  expanded={expandedId === faktur.id}
+                  onToggle={() =>
+                    setExpandedId((cur) =>
+                      cur === faktur.id ? null : faktur.id
+                    )
+                  }
+                />
+              ))}
+              {hasMore ? (
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() =>
+                    loadPage({ offset: items.length, append: true })
+                  }
+                  className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+                >
+                  {loadingMore ? (
+                    <SubmitSpinner className="h-4 w-4" />
+                  ) : null}
+                  Muat lagi
+                </button>
               ) : null}
             </div>
-          </div>
-
-          <div className="space-y-3">
-            {loading ? (
-              <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                Memuat…
-              </div>
-            ) : items.length === 0 ? (
-              <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                {debouncedQ
-                  ? 'Tidak ada faktur yang cocok.'
-                  : 'Belum ada data pembelian.'}
-                {!debouncedQ && canTambah
-                  ? ' Buka menu titik tiga → Upload Pembelian untuk mengunggah Excel Vmedis.'
-                  : ''}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-1.5">
-                {items.map((faktur) => (
-                  <FakturCard
-                    key={faktur.id}
-                    faktur={faktur}
-                    expanded={expandedId === faktur.id}
-                    onToggle={() =>
-                      setExpandedId((cur) =>
-                        cur === faktur.id ? null : faktur.id
-                      )
-                    }
-                  />
-                ))}
-                {hasMore ? (
+          )}
+        </div>
+      ) : hutangStatus === 'rencana_bayar' ? (
+        <div className="space-y-3">
+          <RencanaBayarPanel
+            key={rencanaPanelKey}
+            canTambah={canTambah}
+            onToast={showToast}
+            onSummaryChange={setRencanaSummary}
+          />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {hutangLoading ? (
+            <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+              Memuat…
+            </div>
+          ) : hutangItems.length === 0 ? (
+            <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+              Tidak ada faktur hutang
+              {hutangStatus !== 'semua' ? ' untuk filter ini' : ''}.
+            </div>
+          ) : (
+            <>
+              <div
+                className={`grid grid-cols-1 gap-1.5 ${
+                  selectedIds.size > 0 && canTambah ? 'pb-20' : ''
+                }`}
+              >
+                {hutangItems.map((faktur) => {
+                  const sisa = Number(faktur.sisa_hutang);
+                  const status = String(faktur.status || '').toLowerCase();
+                  const canSelect =
+                    canTambah &&
+                    status !== 'lunas' &&
+                    (status === 'terjadwal' ||
+                      (Number.isFinite(sisa) && sisa > 0));
+                  return (
+                    <HutangCard
+                      key={`${faktur.id}-${faktur.status}-${faktur.sisa_hutang}-${faktur.jumlah_pembayaran}-${faktur.rencana_bayar_id || ''}`}
+                      faktur={faktur}
+                      expanded={hutangExpandedId === faktur.id}
+                      onToggle={() =>
+                        setHutangExpandedId((cur) =>
+                          cur === faktur.id ? null : faktur.id
+                        )
+                      }
+                      selectable={canSelect}
+                      selected={selectedIds.has(faktur.id)}
+                      onSelectChange={(checked) =>
+                        handleSelectChange(faktur, checked)
+                      }
+                      canEdit={canEdit}
+                      canHapus={canHapus}
+                      onEdit={(p) => openEditPembayaran(faktur, p)}
+                      onHapus={(p) => setDeleteTarget(p)}
+                    />
+                  );
+                })}
+                {hutangHasMore ? (
                   <button
                     type="button"
-                    disabled={loadingMore}
+                    disabled={hutangLoadingMore}
                     onClick={() =>
-                      loadPage({ offset: items.length, append: true })
+                      loadHutangPage({
+                        offset: hutangItems.length,
+                        append: true,
+                      })
                     }
                     className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
                   >
-                    {loadingMore ? (
+                    {hutangLoadingMore ? (
                       <SubmitSpinner className="h-4 w-4" />
                     ) : null}
                     Muat lagi
                   </button>
                 ) : null}
               </div>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="sticky top-12 z-20 -mx-3 mb-3 bg-bg-surface/80 px-3 pb-2 pt-1 backdrop-blur-md">
-            <div className="flex gap-1 overflow-x-auto rounded-[4px] border border-border-subtle bg-bg-surface p-0.5">
-              {HUTANG_STATUS_FILTERS.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => {
-                    setHutangStatus(f.id);
-                    if (f.id === 'rencana_bayar') {
-                      setRencanaPanelKey((k) => k + 1);
-                    }
-                  }}
-                  className={`shrink-0 rounded-[4px] px-2.5 py-1.5 text-[12px] font-medium ${
-                    hutangStatus === f.id
-                      ? 'bg-accent-navy text-white'
-                      : 'text-text-secondary hover:bg-bg-surface-hover'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-            {hutangStatus === 'rencana_bayar' ? (
-              <div className="mt-2 flex items-center justify-between gap-3 px-0.5 py-1">
-                <p className="min-w-0 truncate text-[12px] text-text-secondary">
-                  {rencanaSummary.jumlah_draft || 0} PBF,{' '}
-                  {rencanaSummary.jumlah_faktur || 0} Faktur
-                </p>
-                <p className="shrink-0 text-[13px] font-semibold tabular-nums text-accent-yellow">
-                  {formatRupiah(rencanaSummary.total)}
-                </p>
-              </div>
-            ) : hutangStatus === 'belum_bayar' ? (
-              <div className="mt-2 flex items-center justify-between gap-3 px-0.5 py-1">
-                <p className="min-w-0 truncate text-[12px] text-text-secondary">
-                  {hutangSummary.jumlah_pbf || 0} PBF,{' '}
-                  {hutangSummary.jumlah_faktur || 0} Faktur
-                </p>
-                <p className="shrink-0 text-[13px] font-semibold tabular-nums text-accent-yellow">
-                  {formatRupiah(hutangSummary.total_hutang)}
-                </p>
-              </div>
-            ) : null}
-          </div>
-
-          {hutangStatus === 'rencana_bayar' ? (
-            <div className="space-y-3">
-              <RencanaBayarPanel
-                key={rencanaPanelKey}
-                canTambah={canTambah}
-                onToast={showToast}
-                onSummaryChange={setRencanaSummary}
-              />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {hutangLoading ? (
-                <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                  Memuat…
-                </div>
-              ) : hutangItems.length === 0 ? (
-                <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                  Tidak ada faktur hutang
-                  {hutangStatus !== 'semua' ? ' untuk filter ini' : ''}.
-                </div>
-              ) : (
-                <>
-                  <div
-                    className={`grid grid-cols-1 gap-1.5 ${
-                      selectedIds.size > 0 && canTambah ? 'pb-20' : ''
-                    }`}
-                  >
-                    {hutangItems.map((faktur) => {
-                      const sisa = Number(faktur.sisa_hutang);
-                      const status = String(faktur.status || '').toLowerCase();
-                      const canSelect =
-                        canTambah &&
-                        status !== 'lunas' &&
-                        (status === 'terjadwal' ||
-                          (Number.isFinite(sisa) && sisa > 0));
-                      return (
-                        <HutangCard
-                          key={`${faktur.id}-${faktur.status}-${faktur.sisa_hutang}-${faktur.jumlah_pembayaran}-${faktur.rencana_bayar_id || ''}`}
-                          faktur={faktur}
-                          expanded={hutangExpandedId === faktur.id}
-                          onToggle={() =>
-                            setHutangExpandedId((cur) =>
-                              cur === faktur.id ? null : faktur.id
-                            )
-                          }
-                          selectable={canSelect}
-                          selected={selectedIds.has(faktur.id)}
-                          onSelectChange={(checked) =>
-                            handleSelectChange(faktur, checked)
-                          }
-                          canEdit={canEdit}
-                          canHapus={canHapus}
-                          onEdit={(p) => openEditPembayaran(faktur, p)}
-                          onHapus={(p) => setDeleteTarget(p)}
-                        />
-                      );
-                    })}
-                    {hutangHasMore ? (
-                      <button
-                        type="button"
-                        disabled={hutangLoadingMore}
-                        onClick={() =>
-                          loadHutangPage({
-                            offset: hutangItems.length,
-                            append: true,
-                          })
-                        }
-                        className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
-                      >
-                        {hutangLoadingMore ? (
-                          <SubmitSpinner className="h-4 w-4" />
-                        ) : null}
-                        Muat lagi
-                      </button>
-                    ) : null}
-                  </div>
-                  {canTambah && selectedIds.size > 0 ? (
-                    <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-border-subtle bg-bg-surface/95 px-3 py-2.5 backdrop-blur-md">
-                      <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-[12px] font-medium text-text-primary">
-                            {selectedIds.size} faktur dipilih
-                          </p>
-                          <p className="truncate text-[11px] text-text-secondary">
-                            Sisa {formatRupiah(selectedSisaSum)}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleSimpanRencana}
-                          disabled={rencanaBusy}
-                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white disabled:opacity-50"
-                        >
-                          {rencanaBusy ? (
-                            <SubmitSpinner className="h-3.5 w-3.5" />
-                          ) : null}
-                          Simpan Jadwal Bayar
-                        </button>
-                      </div>
+              {canTambah && selectedIds.size > 0 ? (
+                <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-border-subtle bg-bg-surface/95 px-3 py-2.5 backdrop-blur-md">
+                  <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-medium text-text-primary">
+                        {selectedIds.size} faktur dipilih
+                      </p>
+                      <p className="truncate text-[11px] text-text-secondary">
+                        Sisa {formatRupiah(selectedSisaSum)}
+                      </p>
                     </div>
-                  ) : null}
-                </>
-              )}
-            </div>
+                    <button
+                      type="button"
+                      onClick={handleSimpanRencana}
+                      disabled={rencanaBusy}
+                      className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white disabled:opacity-50"
+                    >
+                      {rencanaBusy ? (
+                        <SubmitSpinner className="h-3.5 w-3.5" />
+                      ) : null}
+                      Simpan Jadwal Bayar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </>
           )}
-        </>
+        </div>
       )}
 
       <PembelianUploadSheet

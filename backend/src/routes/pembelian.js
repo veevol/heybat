@@ -117,8 +117,9 @@ router.get('/faktur', requireMenuAksi('pembelian', 'lihat'), async (req, res) =>
         'id, no_faktur, nama_supplier, no_po, jenis_po, status_faktur, tanggal_faktur, tanggal_input, gudang, petugas, jenis_bayar, jatuh_tempo, no_faktur_pajak, subtotal, diskon_tunai, diskon, pajak, biaya, total_transaksi, diupload_oleh, tanggal_upload, nama_file_asal, pembelian_item(count)',
         { count: 'exact' }
       )
-      .order('tanggal_faktur', { ascending: false, nullsFirst: false })
-      .order('id', { ascending: false })
+      .order('tanggal_faktur', { ascending: true, nullsFirst: false })
+      .order('nama_supplier', { ascending: true })
+      .order('no_faktur', { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (q) {
