@@ -104,3 +104,60 @@ export async function hapusPembayaran(pembayaranId) {
     { method: 'DELETE' }
   );
 }
+
+/** Tambah banyak pembayaran sekaligus (batch) — legacy; prefer jadwal bayar */
+export async function tambahPembayaranBatch(payload) {
+  return apiJson(apiUrl('/api/pembelian/pembayaran-batch'), {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** List draft jadwal bayar aktif */
+export async function listRencanaBayar() {
+  return apiJson(apiUrl('/api/pembelian/rencana-bayar'));
+}
+
+/** Detail 1 draft (+ is_reset per item, read-only) */
+export async function getRencanaBayar(id) {
+  return apiJson(
+    apiUrl(`/api/pembelian/rencana-bayar/${encodeURIComponent(id)}`)
+  );
+}
+
+/** Buat/gabung draft — auto-split per supplier di backend */
+export async function simpanRencanaBayar(payload) {
+  return apiJson(apiUrl('/api/pembelian/rencana-bayar'), {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Full replace meta + items draft */
+export async function updateRencanaBayar(id, payload) {
+  return apiJson(
+    apiUrl(`/api/pembelian/rencana-bayar/${encodeURIComponent(id)}`),
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/** Hapus permanen draft */
+export async function hapusRencanaBayar(id) {
+  return apiJson(
+    apiUrl(`/api/pembelian/rencana-bayar/${encodeURIComponent(id)}`),
+    { method: 'DELETE' }
+  );
+}
+
+/** Konfirmasi final → insert pembayaran_hutang */
+export async function konfirmasiRencanaBayar(id) {
+  return apiJson(
+    apiUrl(
+      `/api/pembelian/rencana-bayar/${encodeURIComponent(id)}/konfirmasi`
+    ),
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+}

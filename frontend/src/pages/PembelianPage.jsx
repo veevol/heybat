@@ -2,25 +2,28 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MoreVertical,
   Pencil,
-  Plus,
   Search,
   Trash2,
   Upload,
   Wallet,
 } from 'lucide-react';
 import {
+  getRencanaBayar,
+  hapusPembayaran,
+  hapusRencanaBayar,
   listFakturHutang,
   listPembayaranFaktur,
   listPembelianFaktur,
   listPembelianFakturItems,
-  tambahPembayaran,
+  simpanRencanaBayar,
   editPembayaran,
-  hapusPembayaran,
+  updateRencanaBayar,
 } from '../api/pembelian';
 import AppShell from '../components/layout/AppShell';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import PembayaranFormSheet from '../components/PembayaranFormSheet';
 import PembelianUploadSheet from '../components/PembelianUploadSheet';
+import RencanaBayarPanel from '../components/RencanaBayarPanel';
 import SubmitSpinner from '../components/SubmitSpinner';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
@@ -30,7 +33,7 @@ const PAGE_SIZE = 20;
 const HUTANG_STATUS_FILTERS = [
   { id: 'semua', label: 'Semua' },
   { id: 'belum_bayar', label: 'Belum Bayar' },
-  { id: 'cicilan', label: 'Cicilan' },
+  { id: 'rencana_bayar', label: 'Jadwal Bayar' },
   { id: 'lunas', label: 'Lunas' },
 ];
 
@@ -310,6 +313,13 @@ function HutangStatusBadge({ status }) {
       </span>
     );
   }
+  if (raw === 'terjadwal') {
+    return (
+      <span className="inline-flex rounded-[4px] bg-accent-cyan/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent-cyan">
+        Terjadwal
+      </span>
+    );
+  }
   if (raw === 'cicilan') {
     return (
       <span className="inline-flex rounded-[4px] bg-state-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-warning">
@@ -328,10 +338,11 @@ function HutangCard({
   faktur,
   expanded,
   onToggle,
-  canTambah,
+  selected = false,
+  selectable = false,
+  onSelectChange,
   canEdit,
   canHapus,
-  onTambah,
   onEdit,
   onHapus,
 }) {
@@ -362,37 +373,57 @@ function HutangCard({
   }, [expanded, faktur.id, payments, reload]);
 
   return (
-    <article className="overflow-hidden rounded-[4px] border border-border-subtle bg-bg-surface">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full px-3 py-2.5 text-left transition hover:bg-bg-surface-hover"
-      >
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="min-w-0 truncate text-[13px] font-semibold leading-none text-text-primary">
-            {faktur.nama_supplier || '—'}
-          </h3>
-          <HutangStatusBadge status={faktur.status} />
-        </div>
-        <div className="mt-1.5 flex items-start justify-between gap-2 text-[11px] leading-snug">
-          <p className="min-w-0 truncate text-text-secondary">
-            {faktur.no_faktur || '—'}
-          </p>
-          <p className="shrink-0 whitespace-nowrap text-text-secondary">
-            {formatTanggal(faktur.tanggal_faktur)}
-          </p>
-        </div>
-        <div className="mt-1 flex items-start justify-between gap-2 text-[11px] leading-snug text-text-muted">
-          <span>Jatuh tempo {formatTanggal(faktur.jatuh_tempo)}</span>
-          <span>Total {formatRupiah(faktur.total_transaksi)}</span>
-        </div>
-        <div className="mt-1.5 flex items-end justify-between gap-2">
-          <p className="text-[11px] text-text-muted">Sisa hutang</p>
-          <p className="shrink-0 text-[13px] font-medium leading-none text-accent-yellow">
-            {formatRupiah(faktur.sisa_hutang)}
-          </p>
-        </div>
-      </button>
+    <article
+      className={`overflow-hidden rounded-[4px] border bg-bg-surface ${
+        selected ? 'border-accent-yellow/60' : 'border-border-subtle'
+      }`}
+    >
+      <div className="flex items-stretch">
+        {selectable ? (
+          <label className="flex shrink-0 items-start px-2.5 pt-3">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={(e) => onSelectChange?.(e.target.checked)}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-0.5 h-4 w-4 accent-accent-yellow"
+              aria-label={`Pilih ${faktur.no_faktur || 'faktur'}`}
+            />
+          </label>
+        ) : null}
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`min-w-0 flex-1 py-2.5 text-left transition hover:bg-bg-surface-hover ${
+            selectable ? 'pr-3 pl-0' : 'px-3'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="min-w-0 truncate text-[13px] font-semibold leading-none text-text-primary">
+              {faktur.nama_supplier || '—'}
+            </h3>
+            <HutangStatusBadge status={faktur.status} />
+          </div>
+          <div className="mt-1.5 flex items-start justify-between gap-2 text-[11px] leading-snug">
+            <p className="min-w-0 truncate text-text-secondary">
+              {faktur.no_faktur || '—'}
+            </p>
+            <p className="shrink-0 whitespace-nowrap text-text-secondary">
+              {formatTanggal(faktur.tanggal_faktur)}
+            </p>
+          </div>
+          <div className="mt-1 flex items-start justify-between gap-2 text-[11px] leading-snug text-text-muted">
+            <span>Jatuh tempo {formatTanggal(faktur.jatuh_tempo)}</span>
+            <span>Total {formatRupiah(faktur.total_transaksi)}</span>
+          </div>
+          <div className="mt-1.5 flex items-end justify-between gap-2">
+            <p className="text-[11px] text-text-muted">Sisa hutang</p>
+            <p className="shrink-0 text-[13px] font-medium leading-none text-accent-yellow">
+              {formatRupiah(faktur.sisa_hutang)}
+            </p>
+          </div>
+        </button>
+      </div>
 
       {expanded ? (
         <div className="border-t border-border-subtle bg-bg-base px-3 py-2">
@@ -467,17 +498,6 @@ function HutangCard({
               ))}
             </ul>
           ) : null}
-
-          {canTambah ? (
-            <button
-              type="button"
-              onClick={() => onTambah?.(faktur)}
-              className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[12px] font-medium text-text-primary hover:bg-bg-surface-hover"
-            >
-              <Plus className="h-3.5 w-3.5 text-accent-yellow" />
-              Tambah Pembayaran
-            </button>
-          ) : null}
         </div>
       ) : null}
     </article>
@@ -519,6 +539,19 @@ export default function PembelianPage() {
   const [formBusy, setFormBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [rencanaBusy, setRencanaBusy] = useState(false);
+  const [rencanaPanelKey, setRencanaPanelKey] = useState(0);
+  const [rencanaSummary, setRencanaSummary] = useState({
+    total: 0,
+    jumlah_faktur: 0,
+    jumlah_draft: 0,
+  });
+  const [hutangSummary, setHutangSummary] = useState({
+    jumlah_pbf: 0,
+    jumlah_faktur: 0,
+    total_hutang: 0,
+  });
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -562,6 +595,11 @@ export default function PembelianPage() {
 
   const loadHutangPage = useCallback(
     async ({ offset = 0, append = false, status = hutangStatus } = {}) => {
+      if (status === 'rencana_bayar') {
+        setHutangLoading(false);
+        setHutangLoadingMore(false);
+        return;
+      }
       if (append) setHutangLoadingMore(true);
       else setHutangLoading(true);
       try {
@@ -573,6 +611,29 @@ export default function PembelianPage() {
         const next = data.items || [];
         setHutangItems((prev) => (append ? [...prev, ...next] : next));
         setHutangHasMore(Boolean(data.has_more));
+        if (!append && data.summary) {
+          setHutangSummary({
+            jumlah_pbf: Number(data.summary.jumlah_pbf) || 0,
+            jumlah_faktur: Number(data.summary.jumlah_faktur) || 0,
+            total_hutang: Number(data.summary.total_hutang) || 0,
+          });
+        } else if (!append) {
+          setHutangSummary({
+            jumlah_pbf: 0,
+            jumlah_faktur: 0,
+            total_hutang: 0,
+          });
+        }
+        // Auto-centang faktur yang sudah Terjadwal
+        setSelectedIds((prev) => {
+          const base = append ? new Set(prev) : new Set();
+          for (const f of next) {
+            if (String(f.status || '').toLowerCase() === 'terjadwal') {
+              base.add(f.id);
+            }
+          }
+          return base;
+        });
       } catch (err) {
         showToast(err.message || 'Gagal memuat faktur hutang');
         if (!append) {
@@ -594,10 +655,17 @@ export default function PembelianPage() {
   }, [view, loadPage]);
 
   useEffect(() => {
-    if (view !== 'belum_dibayar') return;
+    if (view !== 'belum_dibayar') {
+      setSelectedIds(new Set());
+      return;
+    }
     setHutangExpandedId(null);
-    loadHutangPage({ offset: 0, append: false });
-  }, [view, loadHutangPage]);
+    if (hutangStatus !== 'rencana_bayar') {
+      loadHutangPage({ offset: 0, append: false });
+    } else {
+      setSelectedIds(new Set());
+    }
+  }, [view, loadHutangPage, hutangStatus]);
 
   useEffect(() => {
     return () => {
@@ -627,13 +695,6 @@ export default function PembelianPage() {
     loadPage({ offset: 0, append: false });
   }
 
-  function openTambahPembayaran(faktur) {
-    setFormMode('tambah');
-    setFormFaktur(faktur);
-    setFormInitial(null);
-    setFormOpen(true);
-  }
-
   function openEditPembayaran(faktur, payment) {
     setFormMode('edit');
     setFormFaktur(faktur);
@@ -643,15 +704,11 @@ export default function PembelianPage() {
 
   async function handleFormSubmit(body) {
     if (!formFaktur || formBusy) return;
+    if (formMode !== 'edit' || !formInitial?.id) return;
     setFormBusy(true);
     try {
-      if (formMode === 'edit' && formInitial?.id) {
-        await editPembayaran(formInitial.id, body);
-        showToast('Pembayaran diperbarui');
-      } else {
-        await tambahPembayaran(formFaktur.id, body);
-        showToast('Pembayaran ditambahkan');
-      }
+      await editPembayaran(formInitial.id, body);
+      showToast('Pembayaran diperbarui');
       setFormOpen(false);
       setFormInitial(null);
       await loadHutangPage({ offset: 0, append: false });
@@ -677,9 +734,91 @@ export default function PembelianPage() {
     }
   }
 
+  function toggleSelect(fakturId, checked) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(fakturId);
+      else next.delete(fakturId);
+      return next;
+    });
+  }
+
+  async function handleSelectChange(faktur, checked) {
+    if (
+      !checked &&
+      String(faktur.status || '').toLowerCase() === 'terjadwal' &&
+      faktur.rencana_bayar_id &&
+      canTambah
+    ) {
+      try {
+        const data = await getRencanaBayar(faktur.rencana_bayar_id);
+        const draft = data.item;
+        const remaining = (draft.items || []).filter(
+          (it) => it.faktur_id !== faktur.id
+        );
+        if (!remaining.length) {
+          await hapusRencanaBayar(faktur.rencana_bayar_id);
+          showToast('Faktur dikeluarkan — draft kosong dihapus');
+        } else {
+          await updateRencanaBayar(faktur.rencana_bayar_id, {
+            tanggal_rencana: draft.tanggal_rencana,
+            metode_bayar: draft.metode_bayar,
+            catatan: draft.catatan,
+            items: remaining.map((it) => ({
+              faktur_id: it.faktur_id,
+              nominal_rencana: it.nominal_rencana,
+            })),
+          });
+          showToast('Faktur dikeluarkan dari jadwal');
+        }
+        toggleSelect(faktur.id, false);
+        await loadHutangPage({ offset: 0, append: false });
+        setRencanaPanelKey((k) => k + 1);
+      } catch (err) {
+        showToast(err.message || 'Gagal mengeluarkan dari jadwal');
+      }
+      return;
+    }
+    toggleSelect(faktur.id, checked);
+  }
+
+  const selectedFakturList = hutangItems.filter((f) => selectedIds.has(f.id));
+  const selectedSisaSum = selectedFakturList.reduce((sum, f) => {
+    const n = Number(f.sisa_hutang);
+    return sum + (Number.isFinite(n) && n > 0 ? n : 0);
+  }, 0);
+
+  async function handleSimpanRencana() {
+    if (rencanaBusy || !selectedFakturList.length) return;
+    setRencanaBusy(true);
+    try {
+      const data = await simpanRencanaBayar({
+        metode_bayar: 'Flip',
+        items: selectedFakturList.map((f) => ({
+          faktur_id: f.id,
+          nominal_rencana: Number(f.sisa_hutang) || undefined,
+        })),
+      });
+      const n = data?.jumlah_draft ?? data?.drafts?.length ?? 0;
+      showToast(
+        n > 1
+          ? `${n} jadwal bayar disimpan (per PBF)`
+          : 'Jadwal bayar disimpan'
+      );
+      await loadHutangPage({ offset: 0, append: false });
+      setRencanaPanelKey((k) => k + 1);
+    } catch (err) {
+      showToast(err.message || 'Gagal menyimpan jadwal');
+    } finally {
+      setRencanaBusy(false);
+    }
+  }
+
   const navLoading =
     (view === 'riwayat' && loading) ||
-    (view === 'belum_dibayar' && hutangLoading);
+    (view === 'belum_dibayar' &&
+      hutangStatus !== 'rencana_bayar' &&
+      hutangLoading);
 
   return (
     <AppShell
@@ -821,7 +960,12 @@ export default function PembelianPage() {
                 <button
                   key={f.id}
                   type="button"
-                  onClick={() => setHutangStatus(f.id)}
+                  onClick={() => {
+                    setHutangStatus(f.id);
+                    if (f.id === 'rencana_bayar') {
+                      setRencanaPanelKey((k) => k + 1);
+                    }
+                  }}
                   className={`shrink-0 rounded-[4px] px-2.5 py-1.5 text-[12px] font-medium ${
                     hutangStatus === f.id
                       ? 'bg-accent-navy text-white'
@@ -832,59 +976,134 @@ export default function PembelianPage() {
                 </button>
               ))}
             </div>
+            {hutangStatus === 'rencana_bayar' ? (
+              <div className="mt-2 flex items-center justify-between gap-3 px-0.5 py-1">
+                <p className="min-w-0 truncate text-[12px] text-text-secondary">
+                  {rencanaSummary.jumlah_draft || 0} PBF,{' '}
+                  {rencanaSummary.jumlah_faktur || 0} Faktur
+                </p>
+                <p className="shrink-0 text-[13px] font-semibold tabular-nums text-accent-yellow">
+                  {formatRupiah(rencanaSummary.total)}
+                </p>
+              </div>
+            ) : hutangStatus === 'belum_bayar' ? (
+              <div className="mt-2 flex items-center justify-between gap-3 px-0.5 py-1">
+                <p className="min-w-0 truncate text-[12px] text-text-secondary">
+                  {hutangSummary.jumlah_pbf || 0} PBF,{' '}
+                  {hutangSummary.jumlah_faktur || 0} Faktur
+                </p>
+                <p className="shrink-0 text-[13px] font-semibold tabular-nums text-accent-yellow">
+                  {formatRupiah(hutangSummary.total_hutang)}
+                </p>
+              </div>
+            ) : null}
           </div>
 
-          <div className="space-y-3">
-            {hutangLoading ? (
-              <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                Memuat…
-              </div>
-            ) : hutangItems.length === 0 ? (
-              <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-                Tidak ada faktur hutang
-                {hutangStatus !== 'semua' ? ' untuk filter ini' : ''}.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-1.5">
-                {hutangItems.map((faktur) => (
-                  <HutangCard
-                    key={`${faktur.id}-${faktur.status}-${faktur.sisa_hutang}-${faktur.jumlah_pembayaran}`}
-                    faktur={faktur}
-                    expanded={hutangExpandedId === faktur.id}
-                    onToggle={() =>
-                      setHutangExpandedId((cur) =>
-                        cur === faktur.id ? null : faktur.id
-                      )
-                    }
-                    canTambah={canTambah}
-                    canEdit={canEdit}
-                    canHapus={canHapus}
-                    onTambah={openTambahPembayaran}
-                    onEdit={(p) => openEditPembayaran(faktur, p)}
-                    onHapus={(p) => setDeleteTarget(p)}
-                  />
-                ))}
-                {hutangHasMore ? (
-                  <button
-                    type="button"
-                    disabled={hutangLoadingMore}
-                    onClick={() =>
-                      loadHutangPage({
-                        offset: hutangItems.length,
-                        append: true,
-                      })
-                    }
-                    className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+          {hutangStatus === 'rencana_bayar' ? (
+            <div className="space-y-3">
+              <RencanaBayarPanel
+                key={rencanaPanelKey}
+                canTambah={canTambah}
+                onToast={showToast}
+                onSummaryChange={setRencanaSummary}
+              />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {hutangLoading ? (
+                <div className="rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+                  Memuat…
+                </div>
+              ) : hutangItems.length === 0 ? (
+                <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
+                  Tidak ada faktur hutang
+                  {hutangStatus !== 'semua' ? ' untuk filter ini' : ''}.
+                </div>
+              ) : (
+                <>
+                  <div
+                    className={`grid grid-cols-1 gap-1.5 ${
+                      selectedIds.size > 0 && canTambah ? 'pb-20' : ''
+                    }`}
                   >
-                    {hutangLoadingMore ? (
-                      <SubmitSpinner className="h-4 w-4" />
+                    {hutangItems.map((faktur) => {
+                      const sisa = Number(faktur.sisa_hutang);
+                      const status = String(faktur.status || '').toLowerCase();
+                      const canSelect =
+                        canTambah &&
+                        status !== 'lunas' &&
+                        (status === 'terjadwal' ||
+                          (Number.isFinite(sisa) && sisa > 0));
+                      return (
+                        <HutangCard
+                          key={`${faktur.id}-${faktur.status}-${faktur.sisa_hutang}-${faktur.jumlah_pembayaran}-${faktur.rencana_bayar_id || ''}`}
+                          faktur={faktur}
+                          expanded={hutangExpandedId === faktur.id}
+                          onToggle={() =>
+                            setHutangExpandedId((cur) =>
+                              cur === faktur.id ? null : faktur.id
+                            )
+                          }
+                          selectable={canSelect}
+                          selected={selectedIds.has(faktur.id)}
+                          onSelectChange={(checked) =>
+                            handleSelectChange(faktur, checked)
+                          }
+                          canEdit={canEdit}
+                          canHapus={canHapus}
+                          onEdit={(p) => openEditPembayaran(faktur, p)}
+                          onHapus={(p) => setDeleteTarget(p)}
+                        />
+                      );
+                    })}
+                    {hutangHasMore ? (
+                      <button
+                        type="button"
+                        disabled={hutangLoadingMore}
+                        onClick={() =>
+                          loadHutangPage({
+                            offset: hutangItems.length,
+                            append: true,
+                          })
+                        }
+                        className="flex w-full items-center justify-center gap-1.5 rounded-[4px] border border-border-subtle bg-bg-surface px-3 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-surface-hover disabled:opacity-50"
+                      >
+                        {hutangLoadingMore ? (
+                          <SubmitSpinner className="h-4 w-4" />
+                        ) : null}
+                        Muat lagi
+                      </button>
                     ) : null}
-                    Muat lagi
-                  </button>
-                ) : null}
-              </div>
-            )}
-          </div>
+                  </div>
+                  {canTambah && selectedIds.size > 0 ? (
+                    <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-border-subtle bg-bg-surface/95 px-3 py-2.5 backdrop-blur-md">
+                      <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[12px] font-medium text-text-primary">
+                            {selectedIds.size} faktur dipilih
+                          </p>
+                          <p className="truncate text-[11px] text-text-secondary">
+                            Sisa {formatRupiah(selectedSisaSum)}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSimpanRencana}
+                          disabled={rencanaBusy}
+                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[4px] bg-accent-navy px-3 py-2 text-[13px] font-medium text-white disabled:opacity-50"
+                        >
+                          {rencanaBusy ? (
+                            <SubmitSpinner className="h-3.5 w-3.5" />
+                          ) : null}
+                          Simpan Jadwal Bayar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
 
