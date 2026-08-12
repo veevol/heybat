@@ -74,19 +74,29 @@ async function loadPaymentAggByFakturIds(fakturIds) {
     const rows = await fetchAllRows(() =>
       supabase
         .from('pembayaran_hutang')
-        .select('faktur_id, nominal, ditandai_lunas_manual')
+        .select('faktur_id, nominal, ditandai_lunas_manual, tanggal_bayar')
         .in('faktur_id', chunk)
     );
     for (const row of rows) {
       const id = row.faktur_id;
       let agg = map.get(id);
       if (!agg) {
-        agg = { total_bayar: 0, lunas_manual: false, jumlah_bayar: 0 };
+        agg = {
+          total_bayar: 0,
+          lunas_manual: false,
+          jumlah_bayar: 0,
+          tanggal_lunas: null,
+        };
         map.set(id, agg);
       }
       agg.total_bayar += Number(row.nominal) || 0;
       agg.jumlah_bayar += 1;
       if (row.ditandai_lunas_manual) agg.lunas_manual = true;
+      const tgl = coerceDateOnly(row.tanggal_bayar);
+      if (tgl && (!agg.tanggal_lunas || tgl > agg.tanggal_lunas)) {
+        // Tanggal bayar terakhir = acuan usia saat lunas
+        agg.tanggal_lunas = tgl;
+      }
     }
   }
   return map;
@@ -146,8 +156,9 @@ router.get(
             'id, no_faktur, nama_supplier, tanggal_faktur, jatuh_tempo, total_transaksi, jenis_bayar'
           )
           .ilike('jenis_bayar', 'HUTANG')
-          .order('tanggal_faktur', { ascending: false, nullsFirst: false })
-          .order('id', { ascending: false });
+          .order('tanggal_faktur', { ascending: true, nullsFirst: false })
+          .order('nama_supplier', { ascending: true })
+          .order('no_faktur', { ascending: true });
         if (q) {
           const safe = String(q)
             .replace(/[%_,.()]/g, ' ')
@@ -171,6 +182,7 @@ router.get(
           total_bayar: 0,
           lunas_manual: false,
           jumlah_bayar: 0,
+          tanggal_lunas: null,
         };
         const total = Number(f.total_transaksi) || 0;
         const sisa = total - agg.total_bayar;
@@ -194,6 +206,7 @@ router.get(
           lunas_manual: agg.lunas_manual,
           jumlah_pembayaran: agg.jumlah_bayar,
           rencana_bayar_id: rencanaId,
+          tanggal_lunas: status === 'lunas' ? agg.tanggal_lunas : null,
         };
       });
 

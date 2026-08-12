@@ -31,9 +31,8 @@ const PAGE_SIZE = 20;
 
 const HUTANG_STATUS_FILTERS = [
   { id: 'riwayat', label: 'Riwayat' },
-  { id: 'semua', label: 'Semua' },
-  { id: 'belum_bayar', label: 'Belum Bayar' },
-  { id: 'rencana_bayar', label: 'Jadwal Bayar' },
+  { id: 'belum_bayar', label: 'Hutang' },
+  { id: 'rencana_bayar', label: 'Jadwal' },
   { id: 'lunas', label: 'Lunas' },
 ];
 
@@ -76,8 +75,8 @@ function formatTanggal(value) {
   }).format(d);
 }
 
-/** Usia faktur dalam hari sejak tanggal_faktur (Asia/Jakarta) */
-function formatUsiaFakturHari(tanggalFaktur) {
+/** Usia faktur dalam hari sejak tanggal_faktur sampai tanggalAkhir (default: hari ini, Asia/Jakarta) */
+function formatUsiaFakturHari(tanggalFaktur, tanggalAkhir = null) {
   if (!tanggalFaktur) return null;
   const raw = String(tanggalFaktur);
   const start =
@@ -86,14 +85,25 @@ function formatUsiaFakturHari(tanggalFaktur) {
       : new Date(raw);
   if (Number.isNaN(start.getTime())) return null;
 
-  const todayStr = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Jakarta',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-  const today = new Date(`${todayStr}T00:00:00+07:00`);
-  const diffDays = Math.round((today.getTime() - start.getTime()) / 86400000);
+  let end;
+  if (tanggalAkhir) {
+    const endRaw = String(tanggalAkhir);
+    end =
+      endRaw.length <= 10
+        ? new Date(`${endRaw.slice(0, 10)}T00:00:00+07:00`)
+        : new Date(endRaw);
+    if (Number.isNaN(end.getTime())) return null;
+  } else {
+    const todayStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    end = new Date(`${todayStr}T00:00:00+07:00`);
+  }
+
+  const diffDays = Math.round((end.getTime() - start.getTime()) / 86400000);
 
   if (!Number.isFinite(diffDays) || diffDays < 0) return '0 D';
   return `${diffDays} D`;
@@ -395,7 +405,11 @@ function HutangCard({
     reload();
   }, [expanded, faktur.id, payments, reload]);
 
-  const usiaFaktur = formatUsiaFakturHari(faktur.tanggal_faktur);
+  const isLunas = String(faktur.status || '').toLowerCase() === 'lunas';
+  const usiaFaktur = formatUsiaFakturHari(
+    faktur.tanggal_faktur,
+    isLunas ? faktur.tanggal_lunas : null
+  );
 
   return (
     <article
@@ -467,59 +481,46 @@ function HutangCard({
             </p>
           ) : null}
           {payments?.length > 0 ? (
-            <ul className="space-y-1.5">
+            <ul className="space-y-1">
               {payments.map((p) => (
                 <li
                   key={p.id}
-                  className="rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-2"
+                  className="flex items-center gap-2 rounded-[4px] border border-border-subtle bg-bg-surface px-2.5 py-1.5"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[12px] font-semibold text-text-primary">
-                          {formatRupiah(p.nominal)}
-                        </span>
-                        {p.ditandai_lunas_manual ? (
-                          <span className="rounded-[4px] bg-state-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-success">
-                            Lunas manual
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-0.5 text-[11px] text-text-secondary">
-                        {formatTanggal(p.tanggal_bayar)}
-                        {p.metode_bayar ? ` · ${p.metode_bayar}` : ''}
-                      </p>
-                      {p.catatan ? (
-                        <p className="mt-0.5 text-[11px] text-text-muted">
-                          {p.catatan}
-                        </p>
+                  <p className="min-w-0 flex-1 truncate text-[11px] text-text-secondary">
+                    {formatTanggal(p.tanggal_bayar)}
+                    {p.metode_bayar ? ` · ${p.metode_bayar}` : ''}
+                    {p.catatan ? ` · ${p.catatan}` : ''}
+                  </p>
+                  {p.ditandai_lunas_manual ? (
+                    <span className="shrink-0 rounded-[4px] bg-state-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-state-success">
+                      Lunas manual
+                    </span>
+                  ) : null}
+                  {canEdit || canHapus ? (
+                    <div className="flex shrink-0 gap-0.5">
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => onEdit?.(p)}
+                          className="rounded-[4px] p-1.5 text-text-secondary hover:bg-bg-surface-hover hover:text-text-primary"
+                          aria-label="Edit pembayaran"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                      {canHapus ? (
+                        <button
+                          type="button"
+                          onClick={() => onHapus?.(p)}
+                          className="rounded-[4px] p-1.5 text-state-error hover:bg-state-error/10"
+                          aria-label="Hapus pembayaran"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       ) : null}
                     </div>
-                    {canEdit || canHapus ? (
-                      <div className="flex shrink-0 gap-0.5">
-                        {canEdit ? (
-                          <button
-                            type="button"
-                            onClick={() => onEdit?.(p)}
-                            className="rounded-[4px] p-1.5 text-text-secondary hover:bg-bg-surface-hover hover:text-text-primary"
-                            aria-label="Edit pembayaran"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        ) : null}
-                        {canHapus ? (
-                          <button
-                            type="button"
-                            onClick={() => onHapus?.(p)}
-                            className="rounded-[4px] p-1.5 text-state-error hover:bg-state-error/10"
-                            aria-label="Hapus pembayaran"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -550,7 +551,7 @@ export default function PembelianPage() {
   const toastTimer = useRef(null);
   const menuRef = useRef(null);
 
-  // Hutang / filter tab (riwayat | semua | belum_bayar | rencana_bayar | lunas)
+  // Hutang / filter tab (riwayat | belum_bayar | rencana_bayar | lunas)
   const [hutangItems, setHutangItems] = useState([]);
   const [hutangHasMore, setHutangHasMore] = useState(false);
   const [hutangLoading, setHutangLoading] = useState(false);
@@ -1007,8 +1008,7 @@ export default function PembelianPage() {
             </div>
           ) : hutangItems.length === 0 ? (
             <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface px-3 py-8 text-center text-[13px] text-text-secondary">
-              Tidak ada faktur hutang
-              {hutangStatus !== 'semua' ? ' untuk filter ini' : ''}.
+              Tidak ada faktur hutang untuk filter ini.
             </div>
           ) : (
             <>
